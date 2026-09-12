@@ -39,7 +39,14 @@ $(DRIVER_NAME)-objs := \
 	src/kallsym.o \
 	src/hwbp.o \
 	src/wxshadow.o \
-	src/stealth_probe.o
+	src/stealth_probe.o \
+	src/arm64_decode/arm64_decode.o \
+	src/arm64_decode/arm64_decode_base.o \
+	src/arm64_decode/arm64_decode_branch.o \
+	src/arm64_decode/arm64_decode_ldst.o \
+	src/arm64_decode/arm64_decode_simd.o \
+	src/arm64_decode/arm64_decode_sme.o \
+	src/arm64_decode/arm64_decode_sve.o
 
 ifneq ($(HIDE_TASK),0)
 $(DRIVER_NAME)-objs += src/dirent_hide.o
