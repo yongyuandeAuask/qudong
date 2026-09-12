@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* userspace communication bootstrap and ioctl router *//* 用户空间通信的引导程序与 ioctl 路由器 */
+/* userspace communication bootstrap and ioctl router */
 
 #include <linux/anon_inodes.h>
 #include <linux/err.h>
@@ -48,7 +48,7 @@
 #include "memory.h"
 #include "sensor.h"
 #include "stealth.h"
-#include "wxshadow.h" /* 替换 user_hook.h */
+#include "wxshadow.h" /* 确保此处替换了 user_hook.h */
 
 struct drv_ring_page {
 	unsigned long pfn;
@@ -104,7 +104,7 @@ static int drv_close_fd(unsigned int fd) {
 static int inofile_release(struct inode *inode, struct file *filp) {
 	(void)inode;
 	hwbp_clear_by_file(filp);
-	wxshadow_clear_by_file(filp); /* 新增：清理 W^X 影子页 */
+	wxshadow_clear_by_file(filp);
 	if (filp->private_data) {
 		kfree(filp->private_data);
 		filp->private_data = NULL;
@@ -183,7 +183,6 @@ void driver_install_fd_tw_func(struct callback_head *twork) {
 	fd = get_unused_fd_flags(O_CLOEXEC);
 	if (fd < 0) { LOGE("fd_install: failed to get unused fd\n"); reply_fd = fd; goto reply; }
 
-	/* 伪装 anon_inode 名称为常见的 [eventpoll] */
 	filp = anon_inode_getfile("[eventpoll]", &inofile_fops, NULL, O_RDWR | O_LARGEFILE);
 	if (IS_ERR(filp)) { LOGE("fd_install: failed to create anon inode file\n"); put_unused_fd(fd); reply_fd = PTR_ERR(filp); goto reply; }
 
@@ -457,7 +456,7 @@ static long dispatch_ioctl_unlocked(struct file *filp, unsigned int cmd, unsigne
 	if (cmd >= DRV_CMD_HWBP_RANGE_FIRST && cmd <= DRV_CMD_HWBP_RANGE_LAST) return do_hwbp_cmd(cmd, uarg, filp);
 	if (cmd >= DRV_CMD_HWBP_EXT_RANGE_FIRST && cmd <= DRV_CMD_HWBP_EXT_RANGE_LAST) return do_hwbp_ext_cmd(cmd, uarg, filp);
 	
-	/* W^X 影子页路由替换原有 PTE Hook，传递 filp 用于生命周期绑定 */
+	/* W^X 影子页路由 */
 	if (cmd >= DRV_CMD_PTE_HOOK_RANGE_FIRST && cmd <= DRV_CMD_PTE_HOOK_RANGE_LAST)
 		return do_wxshadow_cmd(cmd, uarg, filp);
 
