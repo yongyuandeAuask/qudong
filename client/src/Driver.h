@@ -22,35 +22,19 @@ public:
     class Memory {
     public:
         Memory(Driver& d) : m_d(d) {}
-
         bool read(uint64_t addr, void* out, size_t len);
         bool write(uint64_t addr, const void* in, size_t len);
         bool readVmap(uint64_t addr, void* out, size_t len);
         bool writeVmap(uint64_t addr, const void* in, size_t len);
-
         std::optional<uint64_t> getModuleBase(const std::string& name);
         std::optional<uint64_t> getTls();
         std::optional<uint64_t> readVmaCookie(uint64_t addr);
         std::vector<uint64_t> multiRead(const std::vector<uint64_t>& addrs);
         std::vector<VmaInfo> dumpVmas();
-
-        template<typename T>
-        std::optional<T> read(uint64_t addr) {
-            T v{};
-            if (!read(addr, &v, sizeof(T))) return std::nullopt;
-            return v;
-        }
-        template<typename T>
-        bool write(uint64_t addr, const T& v) { return write(addr, &v, sizeof(T)); }
-        template<typename T>
-        std::optional<T> readVmap(uint64_t addr) {
-            T v{};
-            if (!readVmap(addr, &v, sizeof(T))) return std::nullopt;
-            return v;
-        }
-        template<typename T>
-        bool writeVmap(uint64_t addr, const T& v) { return writeVmap(addr, &v, sizeof(T)); }
-
+        template<typename T> std::optional<T> read(uint64_t addr) { T v{}; if (!read(addr, &v, sizeof(T))) return std::nullopt; return v; }
+        template<typename T> bool write(uint64_t addr, const T& v) { return write(addr, &v, sizeof(T)); }
+        template<typename T> std::optional<T> readVmap(uint64_t addr) { T v{}; if (!readVmap(addr, &v, sizeof(T))) return std::nullopt; return v; }
+        template<typename T> bool writeVmap(uint64_t addr, const T& v) { return writeVmap(addr, &v, sizeof(T)); }
     private:
         bool writeChunked(unsigned int cmd, uint64_t addr, const void* in, size_t len);
         Driver& m_d;
@@ -119,7 +103,6 @@ public:
         Driver& m_d;
     };
 
-    // Basename hider — 16 slots, ≤63 chars. Shares kprobe with HidePid.
     class HideName {
     public:
         HideName(Driver& d) : m_d(d) {}
@@ -130,6 +113,19 @@ public:
         Driver& m_d;
     };
 
+    class Ring {
+    public:
+        Ring(Driver& d) : m_d(d) {}
+        bool init(void* user_ptr, size_t size);
+        bool isInit() const { return m_initialized; }
+        void* getPtr() const { return m_ring_ptr; }
+    private:
+        Driver& m_d;
+        bool m_initialized = false;
+        void* m_ring_ptr = nullptr;
+        size_t m_ring_size = 0;
+    };
+
     Driver();
     ~Driver();
     Driver(const Driver&) = delete;
@@ -138,7 +134,6 @@ public:
     bool open();
     void close();
     bool isOpen() const { return m_fd >= 0; }
-    // True iff kernel exposes HWBP and ABI sizes match this build.
     bool hwbpAvailable() const { return m_hwbpAvailable; }
     void setTarget(pid_t pid) { m_targetPid = pid; }
     pid_t target() const { return m_targetPid; }
@@ -157,8 +152,8 @@ public:
     PteHook pteHook;
     HidePid hidePid;
     HideName hideName;
+    Ring ring;
 
-    // Escape hatch for tests + untyped ioctls; true iff ioctl returned >= 0.
     bool rawIoctl(unsigned int cmd, void* arg) { return doIoctlRaw(cmd, arg) >= 0; }
 
 private:
