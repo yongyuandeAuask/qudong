@@ -10,6 +10,19 @@
 #define DRV_LOG_TAG "[memory-driver]"
 #endif
 
+#ifdef KCFG_LOG_SILENT
+#undef LOGE
+#undef LOGW
+#undef LOGN
+#undef LOGI
+#undef LOGD
+#define LOGE(...) do {} while (0)
+#define LOGW(...) do {} while (0)
+#define LOGN(...) do {} while (0)
+#define LOGI(...) do {} while (0)
+#define LOGD(...) do {} while (0)
+#endif
+
 #define LOGE(fmt, ...) printk(KERN_ERR DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW(fmt, ...) printk(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW_RL(fmt, ...) printk_ratelimited(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
