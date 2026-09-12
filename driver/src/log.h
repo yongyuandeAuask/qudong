@@ -10,19 +10,6 @@
 #define DRV_LOG_TAG "[memory-driver]"
 #endif
 
-#ifdef KCFG_LOG_SILENT
-#undef LOGE
-#undef LOGW
-#undef LOGN
-#undef LOGI
-#undef LOGD
-#define LOGE(...) do {} while (0)
-#define LOGW(...) do {} while (0)
-#define LOGN(...) do {} while (0)
-#define LOGI(...) do {} while (0)
-#define LOGD(...) do {} while (0)
-#endif
-
 #define LOGE(fmt, ...) printk(KERN_ERR DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW(fmt, ...) printk(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW_RL(fmt, ...) printk_ratelimited(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
@@ -33,6 +20,25 @@
 #define LOGD(fmt, ...) printk(KERN_DEBUG DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #else
 #define LOGD(fmt, ...) do { } while (0)
+#endif
+
+/* 静默门控：必须位于所有原始 LOGx 定义之后。
+ * 先 undef 再重定义，避免 macro-redefined；位置在末尾保证空定义最终生效。
+ * 覆盖全部六个宏（含 LOGW_RL），防止限流日志泄露。
+ */
+#ifdef KCFG_LOG_SILENT
+#undef LOGE
+#undef LOGW
+#undef LOGW_RL
+#undef LOGN
+#undef LOGI
+#undef LOGD
+#define LOGE(...) do {} while (0)
+#define LOGW(...) do {} while (0)
+#define LOGW_RL(...) do {} while (0)
+#define LOGN(...) do {} while (0)
+#define LOGI(...) do {} while (0)
+#define LOGD(...) do {} while (0)
 #endif
 
 #endif /* DRIVER_LOG_H */
