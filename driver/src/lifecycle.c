@@ -32,7 +32,7 @@
 #include "memory.h"
 #include "module_hide.h"
 #include "stealth.h"
-#include "stealth_probe.h" /* 新增：引入探针摘除器 */
+#include "stealth_probe.h"
 
 struct drv_state drv;
 
@@ -86,7 +86,10 @@ static void conceal_vmap(void) {
 	unsigned long flags = 0;
 	int erased = 0;
 
-	if (!vmap_list) return;
+	if (!vmap_list) {
+		LOGW("conceal_vmap: vmap_area_list not resolvable, skip\n");
+		return;
+	}
 	if (vmap_lock) spin_lock_irqsave(vmap_lock, flags);
 	list_for_each_entry_safe(va, tmp, vmap_list, list) {
 		if (probe < va->va_start || probe >= va->va_end) continue;
@@ -94,9 +97,11 @@ static void conceal_vmap(void) {
 		INIT_LIST_HEAD(&va->list);
 		if (vmap_root) rb_erase(&va->rb_node, vmap_root);
 		erased = 1;
+		LOGI("conceal_vmap: unlinked va %lx..%lx (probe %lx)\n", va->va_start, va->va_end, probe);
 		break;
 	}
 	if (vmap_lock) spin_unlock_irqrestore(vmap_lock, flags);
+	if (!erased) LOGW("conceal_vmap: no vmap area contained probe %lx\n", probe);
 }
 #endif
 
@@ -112,27 +117,30 @@ static void mm_globals_init(void) {
 int __init init_driver(void) {
 	int ret;
 
+	LOGI("driver_entry\n");
+
 	mm_globals_init();
 
 	ret = kallsym_init();
-	if (ret < 0) { return ret; }
+	if (ret < 0) { LOGE("kallsym_init failed: %d\n", ret); return ret; }
 
-	/* 新增：初始化探针摘除器 */
+	/* 初始化探针摘除器 */
 	stealth_probe_init();
 
 	(void)memory_init();
 
 	ret = comm_warm_symbols();
-	if (ret < 0) { return ret; }
+	if (ret < 0) { LOGE("comm_warm_symbols failed: %d\n", ret); return ret; }
 
 	if (hwbp_init()) LOGN("hwbp commands disabled\n");
+	/* 已删除 user_hook_init */
 	if (dirent_hide_init()) LOGN("dirent_hide commands disabled\n");
 	if (kgsl_stealth_arm()) LOGN("kgsl proactive stealth disabled\n");
 
 	ret = register_kprobe(&reboot_kp);
-	if (ret < 0) { return ret; }
-	
-	/* 新增：抹除 reboot 握手探针的结构体痕迹 */
+	if (ret < 0) { LOGE("register_kprobe (__arm64_sys_reboot) failed: %d\n", ret); return ret; }
+
+	/* 抹除 reboot 探针 */
 	stealth_hide_kprobe(&reboot_kp);
 
 #if KCFG_HIDE_SELF_MODULE
