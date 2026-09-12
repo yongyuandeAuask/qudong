@@ -113,6 +113,9 @@ enum drv_cmd {
 	DRV_CMD_HIDE_NAME_CLEAR = 0x56,
 	DRV_CMD_HIDE_PID_RANGE_FIRST = DRV_CMD_HIDE_PID_ADD,
 	DRV_CMD_HIDE_PID_RANGE_LAST = DRV_CMD_HIDE_NAME_CLEAR,
+
+	/* Reverse shared page ring buffer registration. */
+	DRV_CMD_RING_REGISTER = 0x79,
 };
 
 /* Exact full argv[0] lookup request. flags is reserved and pid receives the target TGID. */
@@ -305,6 +308,16 @@ struct drv_pte_hook_install_req {
 	__u64 ret_value;
 	__u64 tramp_addr;
 	__u64 replace_addr;
+};
+
+/* 反向共享页 Ring Buffer Header (用户态与内核态共享) */
+struct drv_ring_header {
+	volatile uint32_t head;
+	volatile uint32_t tail;
+	uint32_t capacity;
+	uint32_t event_size;
+	volatile uint32_t dropped;
+	volatile uint32_t stale;
 };
 
 #endif /* _DRIVER_UAPI_H */
