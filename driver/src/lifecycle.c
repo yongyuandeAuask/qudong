@@ -34,7 +34,7 @@
 #include "memory.h"
 #include "module_hide.h"
 #include "stealth.h"
-#include "user_hook.h"
+/* 已移除: #include "user_hook.h" */
 
 struct drv_state drv;
 
@@ -144,7 +144,7 @@ int __init init_driver(void) {
 	if (ret < 0) { LOGE("comm_warm_symbols failed: %d\n", ret); return ret; }
 
 	if (hwbp_init()) LOGN("hwbp commands disabled\n");
-	if (user_hook_init()) LOGN("pte-hook commands disabled\n");
+	/* 已移除: if (user_hook_init()) LOGN("pte-hook commands disabled\n"); */
 	if (dirent_hide_init()) LOGN("dirent_hide commands disabled\n");
 	if (kgsl_stealth_arm()) LOGN("kgsl proactive stealth disabled\n");
 
