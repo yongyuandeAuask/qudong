@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: GPL-2.0# SPDX 许可证标识符：GPL-2.0# SPDX 许可证标识符：GPL-2.0
-# Kbuild file. Consumed by the kernel build when KERNELRELEASE is set; do not invoke directly — use `make` in the parent directory.# Kbuild 文件。当 KERNELRELEASE 被设置时由内核构建系统调用；请勿直接调用——应在父目录下使用 `make`。# Kbuild 文件。当 KERNELRELEASE 被设置时由内核构建系统调用；请勿直接调用——应在父目录下使用 `make`。
+# SPDX-License-Identifier: GPL-2.0
+# Kbuild file. Consumed by the kernel build when KERNELRELEASE is set; do not invoke directly — use `make` in the parent directory.
 
 DRIVER_NAME ?= my-driver
 HIDE_SELF_MODULE ?= 1
@@ -7,30 +7,30 @@ HIDE_VMAP ?= 1
 HIDE_TASK ?= 1
 HIDE_KGSL_STRENGTH ?= 0
 
-# Booleans must be strictly 0 or 1; STRENGTH is 0..3.# 布尔选项必须严格为 0 或 1；STRENGTH 的取值范围为 0 到 3。# 布尔选项必须严格为 0 或 1；STRENGTH 的取值范围为 0 到 3。# 布尔选项必须严格为 0 或 1；STRENGTH 的取值范围为 0 到 3。# 布尔选项必须严格为 0 或 1；STRENGTH 的取值范围为 0 到 3。
+# Booleans must be strictly 0 or 1; STRENGTH is 0..3.
 ifeq ($(filter 0 1,$(HIDE_SELF_MODULE)),)
-$(error HIDE_SELF_MODULE must be 0 or 1)$(error HIDE_SELF_MODULE 必须为 0 或 1)$(error HIDE_SELF_MODULE 必须为 0 或 1)$(error HIDE_SELF_MODULE 必须为 0 或 1)$(error HIDE_SELF_MODULE 必须为 0 或 1)$(error HIDE_SELF_MODULE 必须为 0 或 1)
+$(error HIDE_SELF_MODULE must be 0 or 1)
 endif
 ifeq ($(filter 0 1,$(HIDE_VMAP)),)
-$(error HIDE_VMAP must be 0 or 1)$(error HIDE_VMAP 必须为 0 或 1)$(error HIDE_VMAP 必须为 0 或 1)$(error HIDE_VMAP 必须为 0 或 1)$(error HIDE_VMAP 必须为 0 或 1)$(error HIDE_VMAP 必须为 0 或 1)$(error HIDE_VMAP 必须为 0 或 1)$(error HIDE_VMAP 必须为 0 或 1)
+$(error HIDE_VMAP must be 0 or 1)
 endif
 ifeq ($(filter 0 1,$(HIDE_TASK)),)
-$(error HIDE_TASK must be 0 or 1)$(error HIDE_TASK 必须为 0 或 1)$(error HIDE_TASK 必须为 0 或 1)$(error HIDE_TASK 必须为 0 或 1)$(error HIDE_TASK 必须为 0 或 1)$(error HIDE_TASK 必须为 0 或 1)$(error HIDE_TASK 必须为 0 或 1)$(error HIDE_TASK 必须为 0 或 1)
+$(error HIDE_TASK must be 0 or 1)
 endif
 ifeq ($(filter 0 1 2 3,$(HIDE_KGSL_STRENGTH)),)
-$(error HIDE_KGSL_STRENGTH must be 0, 1, 2, or 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)$(error HIDE_KGSL_STRENGTH 必须为 0、1、2 或 3)
+$(error HIDE_KGSL_STRENGTH must be 0, 1, 2, or 3)
 endif
 
-# Proactive KGSL kprobes (STRENGTH >= 2) read the shared hidden-PID list from dirent_hide.c.# 主动式 KGSL kprobe（STRENGTH >= 2）从 dirent_hide.c 中读取共享的隐藏 PID 列表。# 主动式 KGSL kprobe（STRENGTH >= 2）从 dirent_hide.c 中读取共享的隐藏 PID 列表。# 主动式 KGSL kprobe（STRENGTH >= 2）从 dirent_hide.c 中读取共享的隐藏 PID 列表。# 主动式 KGSL kprobe（STRENGTH >= 2）从 dirent_hide.c 中读取共享的隐藏 PID 列表。
+# Proactive KGSL kprobes (STRENGTH >= 2) read the shared hidden-PID list from dirent_hide.c.
 ifneq ($(filter 2 3,$(HIDE_KGSL_STRENGTH)),)
 ifeq ($(HIDE_TASK),0)
-$(error HIDE_KGSL_STRENGTH >= 2 requires HIDE_TASK=1 (proactive KGSL hooks read dirent_hide's hidden-PID list))$(error HIDE_KGSL_STRENGTH >= 2 需要 HIDE_TASK=1（主动式 KGSL 钩子读取 dirent_hide 的隐藏-PID 列表）)$(error HIDE_KGSL_STRENGTH >= 2 需要 HIDE_TASK=1（主动式 KGSL 钩子读取 dirent_hide 的隐藏-PID 列表）)
+$(error HIDE_KGSL_STRENGTH >= 2 requires HIDE_TASK=1 (proactive KGSL hooks read dirent_hide's hidden-PID list))
 endif
 endif
 
 obj-m += $(DRIVER_NAME).o
 
-# One .o per .c in src/. Optional subsystems appended below when their gate is on.# src/ 目录下每个 .c 文件对应一个 .o 文件。当其门控开启时，下方会追加可选的子系统。# src/ 目录下每个 .c 文件对应一个 .o 文件。当其门控开启时，下方会追加可选的子系统。
+# One .o per .c in src/. Optional subsystems appended below when their gate is on.
 $(DRIVER_NAME)-objs := \
 	src/lifecycle.o \
 	src/comm.o \
@@ -53,19 +53,19 @@ ifneq ($(HIDE_KGSL_STRENGTH),0)
 $(DRIVER_NAME)-objs += src/stealth.o
 endif
 
-# C.1 /proc/modules scrub: only meaningful when we already unlink ourselves.# C.1 /proc/modules 清理：仅在我们已自行解除链接时才有意义。# C.1 /proc/modules 清理：仅在我们已自行解除链接时才有意义。
+# C.1 /proc/modules scrub: only meaningful when we already unlink ourselves.
 ifneq ($(HIDE_SELF_MODULE),0)
 $(DRIVER_NAME)-objs += src/module_hide.o
 endif
 
-# -I: public headers + intra-subsystem private headers.# -I：公共头文件 + 子系统内部的私有头文件。# -I：公共头文件 + 子系统内部的私有头文件。# -I：公共头文件 + 子系统内部的私有头文件。# -I：公共头文件 + 子系统内部的私有头文件。
+# -I: public headers + intra-subsystem private headers.
 ccflags-y += -I$(src)/include
 ccflags-y += -I$(src)/src
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-function
 ccflags-y += -Wno-unused-variable
 
-# Compile-time knobs. KCFG_* names are what the C code sees.# 编译时选项。KCFG_* 名称是 C 代码所看到的。# 编译时选项。KCFG_* 名称是 C 代码所看到的。# 编译时选项。KCFG_* 名称是 C 代码所看到的。# 编译时选项。KCFG_* 名称是 C 代码所看到的。
+# Compile-time knobs. KCFG_* names are what the C code sees.
 TARGET_PKG ?= "cent.tmgp.sgame"
 ANON_INODE_NAME ?= "[eventpoll]"
 REBOOT_MAGIC ?= 0x123456u
@@ -79,6 +79,6 @@ ccflags-y += -DKCFG_HIDE_VMAP=$(HIDE_VMAP)
 ccflags-y += -DKCFG_HIDE_TASK=$(HIDE_TASK)
 ccflags-y += -DKCFG_HIDE_KGSL_STRENGTH=$(HIDE_KGSL_STRENGTH)
 
-# 隐藏性提升门控：默认静默内核日志
+# 隐藏性提升门控
 KCFG_LOG_SILENT ?= 1
 ccflags-y += -DKCFG_LOG_SILENT=$(KCFG_LOG_SILENT)
