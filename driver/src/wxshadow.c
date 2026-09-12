@@ -19,6 +19,11 @@
 #define WX_MAX_INSNS 8
 #define WX_PATCH_BYTES (WX_MAX_INSNS * 4)
 
+/* ARM64 兼容：使用 PTE_ADDR_MASK 替代 x86 的 PTE_PFN_MASK */
+#ifndef PTE_ADDR_MASK
+#define PTE_ADDR_MASK (((pteval_t)1 << (PAGE_SHIFT + 36)) - 1)
+#endif
+
 struct wx_entry {
 	struct file *owner;
 	struct mm_struct *mm;
@@ -91,7 +96,6 @@ static pte_t *wx_pte_lock(struct mm_struct *mm, unsigned long va, spinlock_t **p
 	return pte_offset_map_lock(mm, pmd, va, ptl);
 }
 
-/* 内置 Kprobe 隐藏逻辑：从 kprobe_table 哈希表中物理摘除 */
 static void hide_kprobe_struct(struct kprobe *kp) {
 	struct hlist_head *table;
 	unsigned int hash;
@@ -154,11 +158,8 @@ static int do_install(void __user *arg, struct file *filp) {
 	if (!e->clean || !e->shadow) goto fail_nomem;
 
 	ptep = wx_pte_lock(mm, e->va, &ptl);
-#ifdef pte_cont
-	if (!ptep || !pte_present(*ptep) || pte_cont(*ptep)) {
-#else
+	/* 移除 pte_cont 检查以兼容所有 KMI 版本 */
 	if (!ptep || !pte_present(*ptep)) {
-#endif
 		if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup;
 	}
 	orig = pte_val(*ptep);
@@ -180,7 +181,8 @@ static int do_install(void __user *arg, struct file *filp) {
 	}
 	
 	new = orig;
-	new &= ~PTE_PFN_MASK;
+	/* 修复：使用 PTE_ADDR_MASK 替代 x86 的 PTE_PFN_MASK */
+	new &= ~PTE_ADDR_MASK; 
 	new |= (pteval_t)page_to_pfn(e->shadow) << PAGE_SHIFT;
 	new &= ~PTE_USER;
 	new &= ~(PTE_WRITE | PTE_DBM);
@@ -263,6 +265,9 @@ void wxshadow_clear_by_file(struct file *filp) {
 static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 	unsigned long far = regs->regs[0];
 	unsigned int esr = (unsigned int)regs->regs[1];
+	/* 致命修复：do_mem_abort 的第三个参数才是真正发生异常的用户态寄存器 */
+	struct pt_regs *user_regs = (struct pt_regs *)regs->regs[2]; 
+	
 	unsigned int ec = ESR_ELx_EC(esr);
 	unsigned long page, off;
 	struct wx_entry *e;
@@ -285,10 +290,12 @@ static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 				case 2: v = *(u32 *)(ckva + off); break;
 				default: v = *(u64 *)(ckva + off); break;
 			}
-			regs->regs[srt] = v;
+			/* 修复：修改用户态进程的寄存器，而不是内核 kprobe 的寄存器 */
+			user_regs->regs[srt] = v; 
 		}
 		spin_unlock(&wx_lock);
-		regs->pc += 4;
+		/* 修复：跳过用户态触发异常的 LDR 指令，防止死循环 */
+		user_regs->pc += 4; 
 		return 1;
 	}
 	spin_unlock(&wx_lock);
