@@ -154,7 +154,11 @@ static int do_install(void __user *arg, struct file *filp) {
 	if (!e->clean || !e->shadow) goto fail_nomem;
 
 	ptep = wx_pte_lock(mm, e->va, &ptl);
+#ifdef pte_cont
 	if (!ptep || !pte_present(*ptep) || pte_cont(*ptep)) {
+#else
+	if (!ptep || !pte_present(*ptep)) {
+#endif
 		if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup;
 	}
 	orig = pte_val(*ptep);
@@ -175,23 +179,21 @@ static int do_install(void __user *arg, struct file *filp) {
 		if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup;
 	}
 	
-	/* 构造 Execute-Only PTE: 剥夺 EL0 读权限，保留执行权限 */
 	new = orig;
 	new &= ~PTE_PFN_MASK;
 	new |= (pteval_t)page_to_pfn(e->shadow) << PAGE_SHIFT;
-	new &= ~PTE_USER;      /* 剥夺 EL0 数据访问权限 (触发 Data Abort) */
+	new &= ~PTE_USER;
 	new &= ~(PTE_WRITE | PTE_DBM);
-	new &= ~PTE_UXN;       /* 允许 EL0 执行 */
+	new &= ~PTE_UXN;
 
-	set_pte(ptep, __pte(0)); wx_flush_va(e->va); /* BREAK */
-	set_pte(ptep, __pte(new)); wx_flush_va(e->va); /* MAKE */
+	set_pte(ptep, __pte(0)); wx_flush_va(e->va);
+	set_pte(ptep, __pte(new)); wx_flush_va(e->va);
 	pte_unmap_unlock(ptep, ptl);
 
 	spin_lock(&wx_lock);
 	list_add(&e->list, &wx_list);
 	spin_unlock(&wx_lock);
 
-	/* Lazy init: 首次安装时注册异常拦截并隐藏 kprobe */
 	if (!wx_hook_armed) {
 		if (register_kprobe(&kp_wx_abort) == 0) {
 			hide_kprobe_struct(&kp_wx_abort);
@@ -258,7 +260,6 @@ void wxshadow_clear_by_file(struct file *filp) {
 	}
 }
 
-/* Data Abort 拦截：当反作弊读取影子页时，返回干净页的原始字节 */
 static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 	unsigned long far = regs->regs[0];
 	unsigned int esr = (unsigned int)regs->regs[1];
@@ -282,12 +283,12 @@ static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 				case 0: v = *(u8 *)(ckva + off); break;
 				case 1: v = *(u16 *)(ckva + off); break;
 				case 2: v = *(u32 *)(ckva + off); break;
-				default默认: v = *(u64 *)(ckva + off); break;
+				default: v = *(u64 *)(ckva + off); break;
 			}
 			regs->regs[srt] = v;
 		}
 		spin_unlock(&wx_lock);
-		regs->pc += 4; /* 跳过触发异常的 LDR 指令 */
+		regs->pc += 4;
 		return 1;
 	}
 	spin_unlock(&wx_lock);
