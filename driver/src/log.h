@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-// Compact log macros; every line is prefixed with DRV_LOG_TAG so dmesg is uniformly grep-able.
 #ifndef DRIVER_LOG_H
 #define DRIVER_LOG_H
 
@@ -10,6 +9,7 @@
 #define DRV_LOG_TAG "[memory-driver]"
 #endif
 
+/* 1. 先定义原始的 printk 宏 */
 #define LOGE(fmt, ...) printk(KERN_ERR DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW(fmt, ...) printk(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW_RL(fmt, ...) printk_ratelimited(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
@@ -22,10 +22,7 @@
 #define LOGD(fmt, ...) do { } while (0)
 #endif
 
-/* 静默门控：必须位于所有原始 LOGx 定义之后。
- * 先 undef 再重定义，避免 macro-redefined；位置在末尾保证空定义最终生效。
- * 覆盖全部六个宏（含 LOGW_RL），防止限流日志泄露。
- */
+/* 2. 最后进行静默覆盖（必须在最下面，且包含 LOGW_RL） */
 #ifdef KCFG_LOG_SILENT
 #undef LOGE
 #undef LOGW
