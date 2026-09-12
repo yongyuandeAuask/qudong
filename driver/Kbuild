@@ -65,6 +65,9 @@ ccflags-y += -I$(src)/src
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-function
 ccflags-y += -Wno-unused-variable
+# Dispa1r inline_hook_frame.h uses C99 for-loop declarations; kernels <=5.15
+# compile with -std=gnu89 and clang promotes -Wgcc-compat to error under -Werror.
+ccflags-y += -Wno-error=gcc-compat
 
 TARGET_PKG ?= "cent.tmgp.sgame"
 ANON_INODE_NAME ?= "[eventpoll]"
