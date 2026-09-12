@@ -19,7 +19,6 @@
 #define WX_MAX_INSNS 8
 #define WX_PATCH_BYTES (WX_MAX_INSNS * 4)
 
-/* ARM64 兼容：使用 PTE_ADDR_MASK 替代 x86 的 PTE_PFN_MASK */
 #ifndef PTE_ADDR_MASK
 #define PTE_ADDR_MASK (((pteval_t)1 << (PAGE_SHIFT + 36)) - 1)
 #endif
@@ -58,21 +57,11 @@ static int build_patch(u32 out[], const u32 original[], u32 kind, u64 value) {
 	int count = 0;
 	memcpy(out, original, WX_PATCH_BYTES);
 	out[count++] = is_bti(original[0]) ? original[0] : ARM64_BTI_C;
-
 	switch (kind) {
-		case DRV_PTE_HOOK_CONST_U64:
-			count += emit_mov_x(&out[count], 0, value);
-			out[count++] = ARM64_RET_X30; break;
-		case DRV_PTE_HOOK_CONST_FLOAT:
-			count += emit_mov_x(&out[count], 1, (u32)value);
-			out[count++] = 0x1e270020; /* fmov s0, w1 */
-			out[count++] = ARM64_RET_X30; break;
-		case DRV_PTE_HOOK_CONST_DOUBLE:
-			count += emit_mov_x(&out[count], 1, value);
-			out[count++] = 0x9e670020; /* fmov d0, x1 */
-			out[count++] = ARM64_RET_X30; break;
-		case DRV_PTE_HOOK_VOID_RET:
-			out[count++] = ARM64_RET_X30; break;
+		case DRV_PTE_HOOK_CONST_U64: count += emit_mov_x(&out[count], 0, value); out[count++] = ARM64_RET_X30; break;
+		case DRV_PTE_HOOK_CONST_FLOAT: count += emit_mov_x(&out[count], 1, (u32)value); out[count++] = 0x1e270020; out[count++] = ARM64_RET_X30; break;
+		case DRV_PTE_HOOK_CONST_DOUBLE: count += emit_mov_x(&out[count], 1, value); out[count++] = 0x9e670020; out[count++] = ARM64_RET_X30; break;
+		case DRV_PTE_HOOK_VOID_RET: out[count++] = ARM64_RET_X30; break;
 		default: return -EOPNOTSUPP;
 	}
 	while (count < WX_MAX_INSNS) out[count++] = ARM64_NOP;
@@ -97,20 +86,13 @@ static pte_t *wx_pte_lock(struct mm_struct *mm, unsigned long va, spinlock_t **p
 }
 
 static void hide_kprobe_struct(struct kprobe *kp) {
-	struct hlist_head *table;
-	unsigned int hash;
-	struct kprobe *pos;
-
-	table = (struct hlist_head *)kallsym_lookup("kprobe_table");
+	struct hlist_head *table = (struct hlist_head *)kallsym_lookup("kprobe_table");
+	unsigned int hash; struct kprobe *pos;
 	if (!table || !kp || !kp->addr) return;
-	
 	hash = ((unsigned long)kp->addr >> 2) & ((1u << 10) - 1);
 	rcu_read_lock();
 	hlist_for_each_entry_rcu(pos, &table[hash], hlist) {
-		if (pos == kp) {
-			hlist_del_rcu(&pos->hlist);
-			break;
-		}
+		if (pos == kp) { hlist_del_rcu(&pos->hlist); break; }
 	}
 	rcu_read_unlock();
 }
@@ -134,8 +116,7 @@ static int do_install(void __user *arg, struct file *filp) {
 	struct task_struct *task; struct mm_struct *mm;
 	struct wx_entry *e; spinlock_t *ptl; pte_t *ptep;
 	pteval_t orig, new; u32 patch[WX_MAX_INSNS];
-	unsigned long off, pfn;
-	void *orig_kva;
+	unsigned long off, pfn; void *orig_kva;
 
 	if (copy_from_user(&req, arg, sizeof(req))) return -EFAULT;
 	off = req.addr & ~PAGE_MASK;
@@ -152,16 +133,12 @@ static int do_install(void __user *arg, struct file *filp) {
 
 	e = kzalloc(sizeof(*e), GFP_KERNEL);
 	if (!e) { mmput(mm); return -ENOMEM; }
-	e->owner = filp;
-	e->mm = mm; e->va = req.addr & PAGE_MASK;
+	e->owner = filp; e->mm = mm; e->va = req.addr & PAGE_MASK;
 	e->clean = alloc_page(GFP_KERNEL); e->shadow = alloc_page(GFP_KERNEL);
 	if (!e->clean || !e->shadow) goto fail_nomem;
 
 	ptep = wx_pte_lock(mm, e->va, &ptl);
-	/* 移除 pte_cont 检查以兼容所有 KMI 版本 */
-	if (!ptep || !pte_present(*ptep)) {
-		if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup;
-	}
+	if (!ptep || !pte_present(*ptep)) { if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup; }
 	orig = pte_val(*ptep);
 	pte_unmap_unlock(ptep, ptl);
 	e->orig_pte = orig;
@@ -171,18 +148,14 @@ static int do_install(void __user *arg, struct file *filp) {
 	memcpy(page_address(e->clean), orig_kva, PAGE_SIZE);
 	memcpy(page_address(e->shadow), page_address(e->clean), PAGE_SIZE);
 
-	if (build_patch(patch, (u32*)page_address(e->clean), req.kind, req.ret_value) != 0)
-		goto fail_unsup;
+	if (build_patch(patch, (u32*)page_address(e->clean), req.kind, req.ret_value) != 0) goto fail_unsup;
 	memcpy(page_address(e->shadow) + off, patch, WX_PATCH_BYTES);
 
 	ptep = wx_pte_lock(mm, e->va, &ptl);
-	if (!ptep || pte_val(*ptep) != orig) {
-		if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup;
-	}
+	if (!ptep || pte_val(*ptep) != orig) { if (ptep) pte_unmap_unlock(ptep, ptl); goto fail_unsup; }
 	
 	new = orig;
-	/* 修复：使用 PTE_ADDR_MASK 替代 x86 的 PTE_PFN_MASK */
-	new &= ~PTE_ADDR_MASK; 
+	new &= ~PTE_ADDR_MASK;
 	new |= (pteval_t)page_to_pfn(e->shadow) << PAGE_SHIFT;
 	new &= ~PTE_USER;
 	new &= ~(PTE_WRITE | PTE_DBM);
@@ -203,75 +176,53 @@ static int do_install(void __user *arg, struct file *filp) {
 		}
 	}
 	return 0;
-
 fail_unsup:
-	if (e->clean) __free_page(e->clean);
-	if (e->shadow) __free_page(e->shadow);
-	kfree(e); mmput(mm);
-	return -EOPNOTSUPP;
+	if (e->clean) __free_page(e->clean); if (e->shadow) __free_page(e->shadow);
+	kfree(e); mmput(mm); return -EOPNOTSUPP;
 fail_nomem:
-	if (e->clean) __free_page(e->clean);
-	if (e->shadow) __free_page(e->shadow);
-	kfree(e); mmput(mm);
-	return -ENOMEM;
+	if (e->clean) __free_page(e->clean); if (e->shadow) __free_page(e->shadow);
+	kfree(e); mmput(mm); return -ENOMEM;
 }
 
 static int do_remove(void __user *arg, struct file *filp) {
 	struct drv_pte_hook_install_req req;
 	struct wx_entry *e, *tmp;
 	if (copy_from_user(&req, arg, sizeof(req))) return -EFAULT;
-	
 	spin_lock(&wx_lock);
 	list_for_each_entry_safe(e, tmp, &wx_list, list) {
 		if (e->va == (req.addr & PAGE_MASK) && e->owner == filp) {
-			list_del(&e->list);
-			spin_unlock(&wx_lock);
-			wx_free_entry(e);
-			return 0;
+			list_del(&e->list); spin_unlock(&wx_lock); wx_free_entry(e); return 0;
 		}
 	}
-	spin_unlock(&wx_lock);
-	return -ENOENT;
+	spin_unlock(&wx_lock); return -ENOENT;
 }
 
 long do_wxshadow_cmd(unsigned int cmd, void __user *arg, struct file *filp) {
 	switch (cmd) {
 		case DRV_CMD_PTE_HOOK_INSTALL: return do_install(arg, filp);
 		case DRV_CMD_PTE_HOOK_REMOVE: return do_remove(arg, filp);
-		case DRV_CMD_PTE_HOOK_CLEAR_ALL:
-			wxshadow_clear_by_file(filp);
-			return 0;
+		case DRV_CMD_PTE_HOOK_CLEAR_ALL: wxshadow_clear_by_file(filp); return 0;
 		default: return -ENOTTY;
 	}
 }
 
 void wxshadow_clear_by_file(struct file *filp) {
-	struct wx_entry *e, *tmp;
-	LIST_HEAD(dead);
+	struct wx_entry *e, *tmp; LIST_HEAD(dead);
 	spin_lock(&wx_lock);
 	list_for_each_entry_safe(e, tmp, &wx_list, list) {
-		if (e->owner == filp) {
-			list_del(&e->list);
-			list_add(&e->list, &dead);
-		}
+		if (e->owner == filp) { list_del(&e->list); list_add(&e->list, &dead); }
 	}
 	spin_unlock(&wx_lock);
-	list_for_each_entry_safe(e, tmp, &dead, list) {
-		list_del(&e->list);
-		wx_free_entry(e);
-	}
+	list_for_each_entry_safe(e, tmp, &dead, list) { list_del(&e->list); wx_free_entry(e); }
 }
 
 static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 	unsigned long far = regs->regs[0];
 	unsigned int esr = (unsigned int)regs->regs[1];
-	/* 致命修复：do_mem_abort 的第三个参数才是真正发生异常的用户态寄存器 */
+	/* 致命修复：do_mem_abort(far, esr, regs) -> x2 才是真正的用户态 pt_regs */
 	struct pt_regs *user_regs = (struct pt_regs *)regs->regs[2]; 
-	
 	unsigned int ec = ESR_ELx_EC(esr);
-	unsigned long page, off;
-	struct wx_entry *e;
-	void *ckva;
+	unsigned long page, off; struct wx_entry *e; void *ckva;
 	unsigned int srt, sas;
 
 	if (ec != ESR_ELx_EC_DABT_LOW || (esr & ESR_ELx_WNR)) return 0;
@@ -290,11 +241,9 @@ static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 				case 2: v = *(u32 *)(ckva + off); break;
 				default: v = *(u64 *)(ckva + off); break;
 			}
-			/* 修复：修改用户态进程的寄存器，而不是内核 kprobe 的寄存器 */
 			user_regs->regs[srt] = v; 
 		}
 		spin_unlock(&wx_lock);
-		/* 修复：跳过用户态触发异常的 LDR 指令，防止死循环 */
 		user_regs->pc += 4; 
 		return 1;
 	}
@@ -302,7 +251,4 @@ static int wx_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 	return 0;
 }
 
-static struct kprobe kp_wx_abort = {
-	.symbol_name = "do_mem_abort",
-	.pre_handler = wx_abort_pre,
-};
+static struct kprobe kp_wx_abort = { .symbol_name = "do_mem_abort", .pre_handler = wx_abort_pre };
