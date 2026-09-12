@@ -24,6 +24,8 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
+#include <linux/mmap_lock.h>
+#include <linux/pagemap.h>
 
 #include <driver/types.h>
 #include <driver/uapi.h>
@@ -47,6 +49,18 @@
 #include "sensor.h"
 #include "stealth.h"
 #include "user_hook.h"
+
+struct drv_ring_page {
+	unsigned long pfn;
+	void *kva;
+};
+
+struct drv_ring_ctx {
+	unsigned long user_ptr;
+	unsigned long size;
+	unsigned long nr_pages;
+	struct drv_ring_page pages[];
+};
 
 static long dispatch_ioctl_unlocked(struct file *filp, unsigned int cmd, unsigned long arg);
 
@@ -94,6 +108,10 @@ static int drv_close_fd(unsigned int fd) {
 static int inofile_release(struct inode *inode, struct file *filp) {
 	(void)inode;
 	hwbp_clear_by_file(filp);
+	if (filp->private_data) {
+		kfree(filp->private_data);
+		filp->private_data = NULL;
+	}
 	return 0;
 }
 
@@ -572,6 +590,57 @@ static long dispatch_ioctl_unlocked(struct file *filp, unsigned int cmd, unsigne
 		return 0;
 	}
 
+	if (cmd == DRV_CMD_RING_REGISTER) {
+		struct drv_ioctl_req req;
+		struct drv_ring_ctx *ctx;
+		struct vm_area_struct *vma;
+		unsigned long nr_pages, i;
+		u64 phys;
+
+		if (read_req(uarg, &req) != 0) return -EFAULT;
+		if (filp->private_data) return -EBUSY;
+		if (req.size < 2 * PAGE_SIZE || (req.size & ~PAGE_MASK)) return -EINVAL;
+
+		mmap_read_lock(current->mm);
+		vma = find_vma(current->mm, req.buf);
+		if (!vma || vma->vm_start > req.buf ||
+		    vma->vm_end < req.buf + req.size ||
+		    !(vma->vm_flags & VM_WRITE) || (vma->vm_flags & VM_SHARED)) {
+			mmap_read_unlock(current->mm);
+			return -EPERM;
+		}
+		if (vaddr_to_phys(current->mm, req.buf, &phys) != 0) {
+			mmap_read_unlock(current->mm);
+			return -EFAULT;
+		}
+		mmap_read_unlock(current->mm);
+
+		nr_pages = req.size >> PAGE_SHIFT;
+		ctx = kzalloc(sizeof(*ctx) + nr_pages * sizeof(ctx->pages[0]), GFP_KERNEL);
+		if (!ctx) return -ENOMEM;
+
+		ctx->user_ptr = req.buf;
+		ctx->size = req.size;
+		ctx->nr_pages = nr_pages;
+		ctx->pages[0].pfn = PHYS_PFN(phys);
+		ctx->pages[0].kva = phys_to_virt(phys);
+
+		for (i = 1; i < nr_pages; i++) {
+			u64 p;
+			mmap_read_lock(current->mm);
+			if (vaddr_to_phys(current->mm, req.buf + (i << PAGE_SHIFT), &p) != 0) {
+				mmap_read_unlock(current->mm);
+				kfree(ctx);
+				return -EFAULT;
+			}
+			mmap_read_unlock(current->mm);
+			ctx->pages[i].pfn = PHYS_PFN(p);
+			ctx->pages[i].kva = page_address(pfn_to_page(PHYS_PFN(p)));
+		}
+		filp->private_data = ctx;
+		return 0;
+	}
+
 	if (cmd == DRV_CMD_FIND_PID_BY_PACKAGE)
 		return do_find_pid_by_package(uarg);
 
@@ -605,4 +674,53 @@ static long dispatch_ioctl_unlocked(struct file *filp, unsigned int cmd, unsigne
 
 long dispatch_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 	return dispatch_ioctl_unlocked(filp, cmd, arg);
+}
+
+int drv_ring_push_event(struct file *filp, const void *event_data, uint32_t event_size) {
+	struct drv_ring_ctx *ctx = filp ? filp->private_data : NULL;
+	struct drv_ring_header *hdr;
+	struct page *page = NULL;
+	u32 cap, head, tail, next_head;
+	u64 data_idx;
+	unsigned long page_idx;
+	void *dst;
+	int ret;
+
+	if (!ctx) return -ENODEV;
+	hdr = (struct drv_ring_header *)ctx->pages[0].kva;
+
+	cap = READ_ONCE(hdr->capacity);
+	if (READ_ONCE(hdr->event_size) != event_size || event_size == 0 ||
+	    event_size > PAGE_SIZE || (PAGE_SIZE % event_size) != 0)
+		return -EINVAL;
+	if (cap == 0 || (u64)cap * event_size > ctx->size - PAGE_SIZE)
+		return -EINVAL;
+
+	head = READ_ONCE(hdr->head);
+	tail = READ_ONCE(hdr->tail);
+	if (head >= cap || tail >= cap) return -EINVAL;
+	next_head = (head + 1) % cap;
+	if (next_head == tail) {
+		WRITE_ONCE(hdr->dropped, READ_ONCE(hdr->dropped) + 1);
+		return 0;
+	}
+
+	data_idx = (u64)head * event_size;
+	page_idx = 1 + (data_idx >> PAGE_SHIFT);
+	if (page_idx >= ctx->nr_pages) return -EINVAL;
+
+	ret = get_user_pages_fast(ctx->user_ptr + (page_idx << PAGE_SHIFT), 1, FOLL_WRITE, &page);
+	if (ret != 1) return -EFAULT;
+	if (page_to_pfn(page) != ctx->pages[page_idx].pfn) {
+		put_page(page);
+		WRITE_ONCE(hdr->stale, 1);
+		return -ESTALE;
+	}
+
+	dst = (char *)ctx->pages[page_idx].kva + (data_idx & ~PAGE_MASK);
+	memcpy(dst, event_data, event_size);
+	smp_wmb();
+	WRITE_ONCE(hdr->head, next_head);
+	put_page(page);
+	return 0;
 }
