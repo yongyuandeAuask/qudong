@@ -9,7 +9,6 @@
 #define DRV_LOG_TAG "[memory-driver]"
 #endif
 
-/* 1. 先定义原始的 printk 宏 */
 #define LOGE(fmt, ...) printk(KERN_ERR DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW(fmt, ...) printk(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
 #define LOGW_RL(fmt, ...) printk_ratelimited(KERN_WARNING DRV_LOG_TAG " " fmt, ##__VA_ARGS__)
@@ -22,7 +21,6 @@
 #define LOGD(fmt, ...) do { } while (0)
 #endif
 
-/* 2. 最后进行静默覆盖（必须在最下面，且包含 LOGW_RL） */
 #ifdef KCFG_LOG_SILENT
 #undef LOGE
 #undef LOGW

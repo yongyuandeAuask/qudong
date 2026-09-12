@@ -124,7 +124,6 @@ int __init init_driver(void) {
 	ret = kallsym_init();
 	if (ret < 0) { LOGE("kallsym_init failed: %d\n", ret); return ret; }
 
-	/* 初始化探针摘除器 */
 	stealth_probe_init();
 
 	(void)memory_init();
@@ -133,14 +132,12 @@ int __init init_driver(void) {
 	if (ret < 0) { LOGE("comm_warm_symbols failed: %d\n", ret); return ret; }
 
 	if (hwbp_init()) LOGN("hwbp commands disabled\n");
-	/* 已删除 user_hook_init */
 	if (dirent_hide_init()) LOGN("dirent_hide commands disabled\n");
 	if (kgsl_stealth_arm()) LOGN("kgsl proactive stealth disabled\n");
 
 	ret = register_kprobe(&reboot_kp);
 	if (ret < 0) { LOGE("register_kprobe (__arm64_sys_reboot) failed: %d\n", ret); return ret; }
 
-	/* 抹除 reboot 探针 */
 	stealth_hide_kprobe(&reboot_kp);
 
 #if KCFG_HIDE_SELF_MODULE
