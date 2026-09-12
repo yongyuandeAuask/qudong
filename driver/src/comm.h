@@ -32,4 +32,6 @@ extern const struct file_operations inofile_fops;
 
 extern struct kprobe reboot_kp;
 
+int drv_ring_push_event(struct file *filp, const void *event_data, uint32_t event_size);
+
 #endif /* DRIVER_COMM_H */
