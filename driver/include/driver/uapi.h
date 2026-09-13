@@ -282,7 +282,7 @@ struct drv_pte_hook_install_req {
 	__u64 replace_addr;
 };
 
-/* W^X Shadow Hook structures (from Dispa1r io_struct.h) */
+/* W^X Shadow Hook structures */
 #define WXSHADOW_MAX_REG_MODS 4
 #define WXSHADOW_PATCH_DATA_MAX 256
 #define WXSHADOW_MAX_BP_RESULTS 32
@@ -329,4 +329,5 @@ struct drv_wxshadow_req {
 	__u64 buf;
 };
 
+/* === UAPI_COMPLETE_MARKER_v2 === */
 #endif /* _DRIVER_UAPI_H */
