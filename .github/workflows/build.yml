@@ -68,16 +68,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch Dispa1r inline-hook decoder (CI-side)
+      - name: Fetch Dispa1r wxshadow + hook subsystem (CI-side)
         run: |
-          mkdir -p driver/src/arm64_decode
+          mkdir -p driver/src/arm64_decode driver/src/wxshadow
           BASE=https://raw.githubusercontent.com/Dispa1r/Integrated_kernel_module/master/lsdriver
           for f in arm64_decode.c arm64_decode.h arm64_decode_base.c arm64_decode_branch.c \
                    arm64_decode_ldst.c arm64_decode_simd.c arm64_decode_sme.c arm64_decode_sve.c; do
             curl -fsSL "$BASE/arm64_decode/$f" -o "driver/src/arm64_decode/$f"
           done
-          curl -fsSL "$BASE/inline_hook_frame.h" -o driver/src/inline_hook_frame.h
-          ls -l driver/src/arm64_decode driver/src/inline_hook_frame.h
+          for f in inline_hook_frame.h wxshadow.h wxshadow_internal.h wxshadow_hook_types.h \
+                   wxshadow_core.c wxshadow_pgtable.c wxshadow_handlers.c wxshadow_bp.c wxshadow_deps.c \
+                   io_struct.h; do
+            curl -fsSL "$BASE/$f" -o "driver/src/wxshadow/$f"
+          done
+          # 复制适配头到 wxshadow 目录（deps.c 需要）
+          cp driver/src/export_fun.h driver/src/wxshadow/
+          cp driver/src/arm64_reg.h driver/src/wxshadow/
+          cp driver/src/lsdriver_log.h driver/src/wxshadow/
+          ls -l driver/src/wxshadow
 
       - name: Build ${{ env.DRIVER_NAME }}.ko
         working-directory: driver
