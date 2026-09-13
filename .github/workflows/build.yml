@@ -81,10 +81,11 @@ jobs:
                    io_struct.h; do
             curl -fsSL "$BASE/$f" -o "driver/src/wxshadow/$f"
           done
-          # 复制适配头到 wxshadow 目录（deps.c 需要）
           cp driver/src/export_fun.h driver/src/wxshadow/
           cp driver/src/arm64_reg.h driver/src/wxshadow/
           cp driver/src/lsdriver_log.h driver/src/wxshadow/
+          # Strip the per-TU inline-asm trampoline array; hook_slots.c owns it (LTO fix)
+          sed -i '/^asm("\.pushsection/,/popsection/d' driver/src/wxshadow/inline_hook_frame.h
           ls -l driver/src/wxshadow
 
       - name: Build ${{ env.DRIVER_NAME }}.ko
