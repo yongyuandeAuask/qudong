@@ -67,6 +67,7 @@ endif
 
 ccflags-y += -I$(src)/include
 ccflags-y += -I$(src)/src
+ccflags-y += -I$(src)/wxshadow
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-function
 ccflags-y += -Wno-unused-variable
