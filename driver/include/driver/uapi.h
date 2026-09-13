@@ -34,14 +34,3 @@ struct wxshadow_state_info {
     int32_t total_pages;
     int32_t total_bps;
     int32_t total_patches;
-    int32_t entry_count;
-    struct wxshadow_page_entry entries[WXSHADOW_MAX_BP_RESULTS];
-};
-
-/* W^X Shadow Hook request struct */
-struct drv_wxshadow_req {
-    __s32 pid;
-    __u32 _pad;
-    __u64 addr;
-    __u64 buf;
-};
