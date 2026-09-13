@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Shared ABI for the kernel module and userspace client. */
 #ifndef _DRIVER_UAPI_H
 #define _DRIVER_UAPI_H
 
@@ -12,47 +11,35 @@
 #include <sys/types.h>
 #endif
 
-/* Kbuild can override this value with -DKCFG_REBOOT_MAGIC. */
 #ifndef KCFG_REBOOT_MAGIC
 #define KCFG_REBOOT_MAGIC 0x123456u
 #endif
 
-/* reboot() handshake: x0/x1 carry magic, x3 points to fd output, x2 is unused. */
 #define DRIVER_REBOOT_MAGIC1 KCFG_REBOOT_MAGIC
 #define DRIVER_REBOOT_MAGIC2 KCFG_REBOOT_MAGIC
-
-/* Reserved commands are handled before the main command switch. */
 #define DRIVER_IOCTL_PING 0x9FBF1u
 #define DRIVER_IOCTL_HELLO 0x1E240u
-
-/* Maximum payload for one process-memory ioctl. */
 #define DRV_MEM_CMD_MAX_SIZE (16ULL << 20)
 
-/* Event layout selected by DRV_CMD_SENSOR_BIND. Values are ABI-stable. */
 enum drv_sensor_layout {
 	DRV_SENSOR_LAYOUT_HIDL_V1 = 0,
 	DRV_SENSOR_LAYOUT_AIDL_V1 = 1,
 	DRV_SENSOR_LAYOUT_COUNT,
 };
 
-/* Raw ioctl commands. */
 enum drv_cmd {
 	DRV_CMD_READ_MEM_LINEAR = 0x0B,
 	DRV_CMD_WRITE_MEM_LINEAR = 0x0C,
-	/* Uses vmap when the page is outside the kernel direct map. */
 	DRV_CMD_READ_MEM_VMAP = 0x0D,
 	DRV_CMD_WRITE_MEM_VMAP = 0x0E,
 	DRV_CMD_GET_MODULE_BASE = 0x0F,
 	DRV_CMD_FIND_TASK_BY_COMM = 0x10,
 	DRV_CMD_READ_VMA_COOKIE = 0x11,
-	/* TLS layout depends on the SDK selection in dispatch_ioctl(). */
 	DRV_CMD_GET_TLS = 0x12,
 	DRV_CMD_HIDE_KGSL = 0x13,
 	DRV_CMD_MULTI_READ = 0x14,
 	DRV_CMD_DUMP_VMAS = 0x15,
-	/* Exact argv[0] lookup using drv_find_pid_req. */
 	DRV_CMD_FIND_PID_BY_PACKAGE = 0x16,
-	/* Writes APGA keys to req.size (lo) and req.extra (hi). */
 	DRV_CMD_GET_APGA_KEYS = 0x17,
 
 	DRV_CMD_GAME_ASSET_READ_A = 0xD0,
@@ -61,26 +48,18 @@ enum drv_cmd {
 	DRV_CMD_GAME_ASSET_READ_B = 0xD4,
 	DRV_CMD_INSTALL_SIGSEGV_SUPPRESS = 0xD5,
 
-	/* The first input-range command allocates the pool and installs input kprobes. */
 	DRV_CMD_TOUCH_DOWN = 0x12D,
 	DRV_CMD_TOUCH_UP = 0x12E,
 	DRV_CMD_TOUCH_MOVE = 0x12F,
-
-	/* First call lazily registers the vfs_read kprobe for /dev/input/event*. */
 	DRV_CMD_TOUCH_SLOT_LEGACY = 0x136,
-
-	/* pid == 100 binds a sensor uprobe; otherwise this updates gyro values. */
 	DRV_CMD_SENSOR_BIND = 0x140,
-
-	/* These values enter the lazy input initialization path. */
 	DRV_CMD_INPUT_RANGE_FIRST = 0x12D,
 	DRV_CMD_INPUT_RANGE_LAST = 0x18F,
 
 	DRV_CMD_HWBP_INSTALL = 0x40,
 	DRV_CMD_HWBP_REMOVE = 0x41,
 	DRV_CMD_HWBP_SET_OVERRIDE = 0x42,
-	/* 0x43 was 280-byte GET_HITS; record now 800 bytes with FPSIMD, moved to 0x63. */
-	DRV_CMD_HWBP_GET_HITS_LEGACY = 0x43, /* rejects with -EPROTO; new number is 0x63 (gen 2) */
+	DRV_CMD_HWBP_GET_HITS_LEGACY = 0x43,
 	DRV_CMD_HWBP_CLEAR_ALL = 0x44,
 	DRV_CMD_HWBP_GET_CAPS = 0x45,
 	DRV_CMD_HWBP_SET_SAMPLE = 0x46,
@@ -94,31 +73,31 @@ enum drv_cmd {
 	DRV_CMD_PTE_HOOK_RANGE_FIRST = DRV_CMD_PTE_HOOK_INSTALL,
 	DRV_CMD_PTE_HOOK_RANGE_LAST = DRV_CMD_PTE_HOOK_CLEAR_ALL,
 
-	/* Extended HWBP commands after PTE + hide ranges to keep the primary HWBP range contiguous. */
 	DRV_CMD_HWBP_SET_BYPASS_PID = 0x60,
 	DRV_CMD_HWBP_SET_NOTIFY = 0x61,
 	DRV_CMD_HWBP_TRANSLATE_BAIT = 0x62,
-	DRV_CMD_HWBP_GET_HITS = 0x63, /* 800-byte hit records, ABI gen 2 */
+	DRV_CMD_HWBP_GET_HITS = 0x63,
 	DRV_CMD_HWBP_EXT_RANGE_FIRST = DRV_CMD_HWBP_SET_BYPASS_PID,
 	DRV_CMD_HWBP_EXT_RANGE_LAST = DRV_CMD_HWBP_GET_HITS,
 
-	/* PID concealment (up to DIRENT_HIDE_MAX_PIDS slots; see dirent_hide.h). */
 	DRV_CMD_HIDE_PID_ADD = 0x50,
 	DRV_CMD_HIDE_PID_REMOVE = 0x51,
 	DRV_CMD_HIDE_PID_CLEAR = 0x52,
 	DRV_CMD_HIDE_PID_LIST = 0x53,
-	/* B.1 file/dir name concealment; req.buf = name of req.size bytes. */
 	DRV_CMD_HIDE_NAME_ADD = 0x54,
 	DRV_CMD_HIDE_NAME_REMOVE = 0x55,
 	DRV_CMD_HIDE_NAME_CLEAR = 0x56,
 	DRV_CMD_HIDE_PID_RANGE_FIRST = DRV_CMD_HIDE_PID_ADD,
 	DRV_CMD_HIDE_PID_RANGE_LAST = DRV_CMD_HIDE_NAME_CLEAR,
 
-	/* Reverse shared page ring buffer registration. */
-	DRV_CMD_RING_REGISTER = 0x79,
+	/* W^X Shadow Hook commands */
+	DRV_CMD_WX_SET_BP = 0x80,
+	DRV_CMD_WX_DEL_BP = 0x81,
+	DRV_CMD_WX_PATCH = 0x82,
+	DRV_CMD_WX_RELEASE = 0x83,
+	DRV_CMD_WX_GET_STATE = 0x84,
 };
 
-/* Exact full argv[0] lookup request. flags is reserved and pid receives the target TGID. */
 #define DRV_PACKAGE_NAME_MAX 255u
 struct drv_find_pid_req {
 	__s32 pid;
@@ -126,38 +105,33 @@ struct drv_find_pid_req {
 	char package[DRV_PACKAGE_NAME_MAX + 1u];
 };
 
-/* Shared 40-byte payload for commands in the 0x0B..0x17 range. */
 struct drv_ioctl_req {
-	__u64 pid; /* +0x00 */
-	__u64 addr; /* +0x08 */
-	__u64 buf; /* +0x10 */
-	__u64 size; /* +0x18 */
-	__u64 extra; /* +0x20 */
+	__u64 pid;
+	__u64 addr;
+	__u64 buf;
+	__u64 size;
+	__u64 extra;
 };
 
-/* 24-byte DRV_CMD_MULTI_READ descriptor; req.buf is its array and req.extra is its count. */
 struct drv_multi_read_req {
 	__u64 user_dst;
 	__u64 src_va;
 	__u64 len;
 };
 
-/* 16-byte payload for DRV_CMD_TOUCH_*; callers must zero unused fields. */
 struct drv_touch_inject_req {
 	__u32 slot_id;
 	__u32 x;
 	__u32 y;
-	__u32 pressure; /* DOWN only */
+	__u32 pressure;
 };
 
-/* In-pool input event with the type/code/value wire layout. */
 struct drv_input_event {
-	__u32 type; /* EV_KEY, EV_ABS, or EV_SYN */
-	__u32 code; /* ABS_MT_*, BTN_TOUCH, SYN_REPORT, ... */
-	__s32 value; /* Tracking ID can be -1. */
+	__u32 type;
+	__u32 code;
+	__s32 value;
 };
 
-/* HWBP ABI — Type/len mirror kernel HW_BREAKPOINT_R/W/RW/X. */
 #define DRV_HWBP_TYPE_R 1u
 #define DRV_HWBP_TYPE_W 2u
 #define DRV_HWBP_TYPE_RW 3u
@@ -171,14 +145,11 @@ struct drv_input_event {
 #define DRV_HWBP_MAX_OVERRIDES 10u
 #define DRV_HWBP_HIT_RING_SLOTS 32u
 
-/* Per-tracker install flags; `flags` reuses the historical `_pad` slot (zero = legacy). */
-/* DEPRECATED: no effect, retained for source compatibility, absent from caps.flags_supported. */
 #define DRV_HWBP_FLAG_BAIT_GUARD (1u << 0)
-#define DRV_HWBP_FLAG_NOTIFY (1u << 1) /* deliver signal_no (default 43) to notify_pid on hit */
-#define DRV_HWBP_FLAG_CAPTURE_FP (1u << 2) /* capture FPSIMD state (Q0..Q31) in hit ring */
-#define DRV_HWBP_FLAG_TIMING_BYPASS (1u << 3) /* skip ring push & signal to eliminate observable latency */
+#define DRV_HWBP_FLAG_NOTIFY (1u << 1)
+#define DRV_HWBP_FLAG_CAPTURE_FP (1u << 2)
+#define DRV_HWBP_FLAG_TIMING_BYPASS (1u << 3)
 
-/* Condition operator for DRV_CMD_HWBP_SET_CONDITION. */
 #define DRV_HWBP_COND_NONE 0u
 #define DRV_HWBP_COND_EQ 1u
 #define DRV_HWBP_COND_NE 2u
@@ -208,61 +179,54 @@ struct drv_hwbp_install_req {
 	__u32 override_count;
 	__u64 addr;
 	__u32 pass_through;
-	__u32 flags; /* DRV_HWBP_FLAG_* bitmask; historical name was _pad */
+	__u32 flags;
 	struct drv_hwbp_reg_override overrides[DRV_HWBP_MAX_OVERRIDES];
 };
 
-/* Per-hit record; FPSIMD tail (q_lo/q_hi) only populated when CAPTURE_FP flag set. */
 struct drv_hwbp_hit {
 	__u64 timestamp_ns;
 	__u64 pc;
 	__u64 sp;
 	__u64 pstate;
 	__u64 x[31];
-	__u64 q_lo[32]; /* Q0..Q31 low half (V0..V31.D[0]) */
-	__u64 q_hi[32]; /* Q0..Q31 high half (V0..V31.D[1]) */
+	__u64 q_lo[32];
+	__u64 q_hi[32];
 	__u32 fpsr;
 	__u32 fpcr;
 };
 
-/* Bumped when wire format or command numbers change beyond what sizeof checks catch. */
-/* Packed into high 8 bits of flags_supported so caps stays 32 bytes — growing it would overflow an old client's stack buffer. */
-/* gen 2 = 800-byte hit records + GET_HITS at 0x63. */
 #define DRV_HWBP_ABI_GENERATION 2u
 #define DRV_HWBP_ABI_GEN_SHIFT 24u
 #define DRV_HWBP_ABI_GEN_MASK 0xFFu
 #define DRV_HWBP_CAPS_FLAGS_MASK 0x00FFFFFFu
 
-#define DRV_HWBP_CAPS_GEN(v) \
-	(((v) >> DRV_HWBP_ABI_GEN_SHIFT) & DRV_HWBP_ABI_GEN_MASK)
-#define DRV_HWBP_CAPS_FLAGS(v) \
-	((v) & DRV_HWBP_CAPS_FLAGS_MASK)
+#define DRV_HWBP_CAPS_GEN(v) (((v) >> DRV_HWBP_ABI_GEN_SHIFT) & DRV_HWBP_ABI_GEN_MASK)
+#define DRV_HWBP_CAPS_FLAGS(v) ((v) & DRV_HWBP_CAPS_FLAGS_MASK)
 
 struct drv_hwbp_caps {
-	__u32 num_brps; /* execute slots reported by ID_AA64DFR0_EL1.BRPs */
-	__u32 num_wrps; /* watchpoint slots reported by ID_AA64DFR0_EL1.WRPs */
-	__u32 ring_slots; /* DRV_HWBP_HIT_RING_SLOTS */
-	__u32 max_overrides; /* DRV_HWBP_MAX_OVERRIDES */
-	__u32 hit_bytes; /* sizeof(struct drv_hwbp_hit) */
-	__u32 install_req_bytes; /* sizeof(struct drv_hwbp_install_req) */
-	/* Low 24 bits: DRV_HWBP_FLAG_* this build understands; high 8 bits: DRV_HWBP_ABI_GENERATION. */
+	__u32 num_brps;
+	__u32 num_wrps;
+	__u32 ring_slots;
+	__u32 max_overrides;
+	__u32 hit_bytes;
+	__u32 install_req_bytes;
 	__u32 flags_supported;
-	__u32 fp_ready; /* 1 if FPSIMD helpers were resolved at init */
+	__u32 fp_ready;
 };
 
 struct drv_hwbp_sample_req {
 	__s32 pid;
 	__u32 _pad;
 	__u64 addr;
-	__u32 every; /* 0 = disable, N = fire only when hit_count % N == 0 */
+	__u32 every;
 	__u32 _pad2;
 };
 
 struct drv_hwbp_condition_req {
 	__s32 pid;
-	__u32 cond_op; /* DRV_HWBP_COND_* */
+	__u32 cond_op;
 	__u64 addr;
-	__u32 cond_reg; /* 0..30 (X-reg index) */
+	__u32 cond_reg;
 	__u32 _pad;
 	__u64 cond_value;
 };
@@ -271,15 +235,14 @@ struct drv_hwbp_bypass_req {
 	__s32 pid;
 	__u32 _pad;
 	__u64 addr;
-	__s32 bypass_pid; /* one-shot: hit consumed instead of firing */
+	__s32 bypass_pid;
 	__u32 _pad2;
 };
 
 struct drv_hwbp_notify_req {
 	__s32 pid;
-	__s32 notify_pid; /* recipient; 0 = disable notifications for this tracker */
+	__s32 notify_pid;
 	__u64 addr;
-	/* signal_no: 0 -> kernel default 43 (past Bionic's 32..34, 40/41 reserved); explicit choices stay >= 42. */
 	__u32 signal_no;
 	__u32 _pad;
 };
@@ -287,11 +250,10 @@ struct drv_hwbp_notify_req {
 struct drv_hwbp_bait_req {
 	__s32 pid;
 	__u32 _pad;
-	__u64 addr; /* user-supplied "bait" address */
-	__u64 real_addr; /* [out] translated address (equal to input if no translation) */
+	__u64 addr;
+	__u64 real_addr;
 };
 
-/* AArch64 user-code return-stub ABI. TRAMPOLINE is reserved for v2. */
 enum drv_pte_hook_kind {
 	DRV_PTE_HOOK_CONST_U64 = 0,
 	DRV_PTE_HOOK_TRAMPOLINE = 1,
@@ -310,14 +272,12 @@ struct drv_pte_hook_install_req {
 	__u64 replace_addr;
 };
 
-/* 反向共享页 Ring Buffer Header (用户态与内核态共享) */
-struct drv_ring_header {
-	volatile uint32_t head;
-	volatile uint32_t tail;
-	uint32_t capacity;
-	uint32_t event_size;
-	volatile uint32_t dropped;
-	volatile uint32_t stale;
+/* W^X Shadow Hook request struct */
+struct drv_wxshadow_req {
+	__s32 pid;
+	__u32 _pad;
+	__u64 addr;
+	__u64 buf;
 };
 
 #endif /* _DRIVER_UAPI_H */
