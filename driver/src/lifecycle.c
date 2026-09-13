@@ -117,7 +117,6 @@ static void mm_globals_init(void) {
 	drv.m_pgd_va = (u64)(uintptr_t)phys_to_virt(pgd_pa);
 }
 
-/* do_exit cleanup: drop all shadow pages of the exiting process */
 static int drv_on_do_exit(struct pt_regs *regs)
 {
 	struct task_struct *t = current;
@@ -126,7 +125,6 @@ static int drv_on_do_exit(struct pt_regs *regs)
 	return 0;
 }
 
-/* copy_process fork protection: child must not inherit shadow PFNs */
 static int drv_on_copy_process(struct pt_regs *regs)
 {
 	struct mm_struct *mm = current->mm;
@@ -167,6 +165,9 @@ int __init init_driver(void) {
 #endif
 
 	wxshadow_init();
+
+	/* 初始化本编译单元的 patch_text 函数指针，否则 inline_hook_install 必失败 */
+	drv_hook_deps_init();
 
 	{
 		static struct hook_entry do_exit_hook[] = {
