@@ -166,7 +166,6 @@ int __init init_driver(void) {
 
 	wxshadow_init();
 
-	/* 初始化本编译单元的 patch_text 函数指针，否则 inline_hook_install 必失败 */
 	drv_hook_deps_init();
 
 	{
