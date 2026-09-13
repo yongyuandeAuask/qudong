@@ -29,6 +29,7 @@ obj-m += $(DRIVER_NAME).o
 $(DRIVER_NAME)-objs := \
 	src/lifecycle.o \
 	src/comm.o \
+	src/comm_wxshadow.o \
 	src/memory.o \
 	src/vfs_hijack.o \
 	src/input_synth.o \
@@ -46,7 +47,12 @@ $(DRIVER_NAME)-objs := \
 	src/arm64_decode/arm64_decode_ldst.o \
 	src/arm64_decode/arm64_decode_simd.o \
 	src/arm64_decode/arm64_decode_sme.o \
-	src/arm64_decode/arm64_decode_sve.o
+	src/arm64_decode/arm64_decode_sve.o \
+	src/wxshadow/wxshadow_core.o \
+	src/wxshadow/wxshadow_pgtable.o \
+	src/wxshadow/wxshadow_handlers.o \
+	src/wxshadow/wxshadow_bp.o \
+	src/wxshadow/wxshadow_deps.o
 
 ifneq ($(HIDE_TASK),0)
 $(DRIVER_NAME)-objs += src/dirent_hide.o
@@ -60,30 +66,10 @@ ifneq ($(HIDE_SELF_MODULE),0)
 $(DRIVER_NAME)-objs += src/module_hide.o
 endif
 
-# ---- wxshadow kernel-version gate: requires >= 6.5 API surface ----
-KERMAJ := $(shell grep -m1 '^VERSION = ' $(srctree)/Makefile 2>/dev/null | cut -d= -f2 | tr -d ' ')
-KERMIN := $(shell grep -m1 '^PATCHLEVEL = ' $(srctree)/Makefile 2>/dev/null | cut -d= -f2 | tr -d ' ')
-ifeq ($(KERMAJ),)
-KERMAJ := 6
-KERMIN := 6
-endif
-WX_OK := $(shell if [ "$(KERMAJ)" -gt 6 ] || { [ "$(KERMAJ)" -eq 6 ] && [ "$(KERMIN)" -ge 5 ]; }; then echo 1; else echo 0; fi)
-
-ifeq ($(WX_OK),1)
-$(DRIVER_NAME)-objs += \
-	src/comm_wxshadow.o \
-	src/wxshadow/wxshadow_core.o \
-	src/wxshadow/wxshadow_pgtable.o \
-	src/wxshadow/wxshadow_handlers.o \
-	src/wxshadow/wxshadow_bp.o \
-	src/wxshadow/wxshadow_deps.o
-ccflags-y += -I$(src)/src/wxshadow
-ccflags-y += -include $(src)/src/wx_compat.h
-ccflags-y += -DKCFG_WXSHADOW=1
-endif
-
 ccflags-y += -I$(src)/include
 ccflags-y += -I$(src)/src
+ccflags-y += -I$(src)/src/wxshadow
+ccflags-y += -include $(src)/src/wx_compat.h
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-function
 ccflags-y += -Wno-unused-variable
