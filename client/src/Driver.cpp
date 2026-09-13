@@ -9,6 +9,24 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+/* W^X Shadow command numbers. Guarded so that if uapi.h already provides
+ * them we reuse those; otherwise we supply them here. Identical values either way. */
+#ifndef DRV_CMD_WX_SET_BP
+#define DRV_CMD_WX_SET_BP 0x80
+#endif
+#ifndef DRV_CMD_WX_DEL_BP
+#define DRV_CMD_WX_DEL_BP 0x81
+#endif
+#ifndef DRV_CMD_WX_PATCH
+#define DRV_CMD_WX_PATCH 0x82
+#endif
+#ifndef DRV_CMD_WX_RELEASE
+#define DRV_CMD_WX_RELEASE 0x83
+#endif
+#ifndef DRV_CMD_WX_GET_STATE
+#define DRV_CMD_WX_GET_STATE 0x84
+#endif
+
 Driver driver;
 
 Driver::Driver() : memory(*this), touch(*this), gyro(*this), hwbp(*this), pteHook(*this), hidePid(*this), hideName(*this), wxShadow(*this) {}
@@ -17,7 +35,6 @@ Driver::~Driver() {
     close();
 }
 
-// Handshake + CAPS negotiation; caps EOPNOTSUPP keeps fd open with hwbpAvailable()==false, size/gen mismatch fails EPROTO.
 bool Driver::open() {
     if (m_fd >= 0) return true;
     int newFd = -1;
@@ -49,7 +66,6 @@ void Driver::close() {
     if (m_fd < 0) return;
     ::close(m_fd);
     m_fd = -1;
-    // Clear the cached probe so a later hwbpAvailable() before re-open reports honestly.
     m_hwbpAvailable = false;
 }
 
@@ -222,7 +238,6 @@ std::vector<VmaInfo> Driver::Memory::dumpVmas() {
     return entries;
 }
 
-// Touch commands pass drv_touch_inject_req directly because the kernel copies that exact 16-byte payload.
 bool Driver::Touch::down(int slot, int x, int y, int pressure) {
     drv_touch_inject_req tr{};
     tr.slot_id = static_cast<uint32_t>(slot);
@@ -246,7 +261,6 @@ bool Driver::Touch::up(int slot) {
     return m_d.doIoctlRaw(DRV_CMD_TOUCH_UP, &tr) >= 0;
 }
 
-// Repeating the same offset/layout bind is idempotent; a different bind is rejected by the kernel.
 bool Driver::Gyro::bind(uint64_t probeOffset, int layoutProfile) {
     drv_ioctl_req req{};
     req.pid = 100;
@@ -435,7 +449,6 @@ bool Driver::PteHook::clearAll() {
     return m_d.doIoctlRaw(DRV_CMD_PTE_HOOK_CLEAR_ALL, nullptr) >= 0;
 }
 
-// HidePid — up to 8 PIDs hidden from /proc readdir (plus proactive KGSL hooks when built with HIDE_KGSL_STRENGTH>=2).
 bool Driver::HidePid::add(pid_t pid) {
     drv_ioctl_req req{};
     req.pid = static_cast<uint64_t>(pid);
@@ -464,7 +477,6 @@ std::vector<pid_t> Driver::HidePid::list() {
     return out;
 }
 
-// HideName — 16 basename slots; covers every filldir64-based readdir (proc/ext4/f2fs/tmpfs/overlayfs).
 bool Driver::HideName::add(const std::string& name) {
     if (name.empty() || name.size() >= 64) { errno = EINVAL; return false; }
     drv_ioctl_req req{};
@@ -486,7 +498,9 @@ bool Driver::HideName::clear() {
     return m_d.doIoctl(DRV_CMD_HIDE_NAME_CLEAR, &req) >= 0;
 }
 
-// ---- WxShadow implementation ----
+// ---- W^X Shadow (wxshadow) ----
+// cfg/info are opaque pointers: the kernel copies the exact bytes the caller
+// provides, so the client never needs the kernel-side struct definitions.
 
 bool Driver::WxShadow::setBp(pid_t pid, uint64_t addr, const void* cfg) {
     drv_wxshadow_req req{};
