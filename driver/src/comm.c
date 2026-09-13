@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/* userspace communication bootstrap and ioctl router */
-
 #include <linux/anon_inodes.h>
 #include <linux/err.h>
 #include <linux/errno.h>
@@ -24,8 +21,6 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
-#include <linux/mmap_lock.h>
-#include <linux/pagemap.h>
 
 #include <driver/types.h>
 #include <driver/uapi.h>
@@ -48,292 +43,47 @@
 #include "memory.h"
 #include "sensor.h"
 #include "stealth.h"
-#include "wxshadow.h" /* 确保此处替换了 user_hook.h */
-
-struct drv_ring_page {
-	unsigned long pfn;
-	void *kva;
-};
-
-struct drv_ring_ctx {
-	unsigned long user_ptr;
-	unsigned long size;
-	unsigned long nr_pages;
-	struct drv_ring_page pages[];
-};
+#include "user_hook.h"
+#include "comm_wxshadow.h" /* 新增 WX 路由头 */
 
 static long dispatch_ioctl_unlocked(struct file *filp, unsigned int cmd, unsigned long arg);
 
-typedef int (*task_work_add_fn_t)(struct task_struct *task, struct callback_head *work, enum task_work_notify_mode notify);
-static task_work_add_fn_t task_work_add_ptr;
-
-static noinline __nocfi int drv_call_task_work_add(task_work_add_fn_t fn, struct task_struct *task, struct callback_head *work, enum task_work_notify_mode notify) {
-	return fn(task, work, notify);
-}
-
-static int drv_task_work_add(struct task_struct *task, struct callback_head *work, enum task_work_notify_mode notify) {
-	if (!task_work_add_ptr) {
-		task_work_add_ptr = (task_work_add_fn_t)kallsym_lookup("task_work_add");
-		if (!task_work_add_ptr) {
-			LOGE("task_work_add not found\n");
-			return -ENOENT;
-		}
-	}
-	return drv_call_task_work_add(task_work_add_ptr, task, work, notify);
-}
-
-int comm_warm_symbols(void) {
-	if (!task_work_add_ptr) {
-		task_work_add_ptr = (task_work_add_fn_t)kallsym_lookup("task_work_add");
-		if (!task_work_add_ptr) {
-			LOGE("comm_warm_symbols: task_work_add not found\n");
-			return -ENOENT;
-		}
-	}
-	return 0;
-}
-
-static int drv_close_fd(unsigned int fd) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-	return close_fd(fd);
-#else
-	return __close_fd(current->files, fd);
-#endif
-}
-
-static int inofile_release(struct inode *inode, struct file *filp) {
-	(void)inode;
-	hwbp_clear_by_file(filp);
-	wxshadow_clear_by_file(filp);
-	if (filp->private_data) {
-		kfree(filp->private_data);
-		filp->private_data = NULL;
-	}
-	return 0;
-}
-
-const struct file_operations inofile_fops = {
-	.owner = THIS_MODULE,
-	.unlocked_ioctl = dispatch_ioctl_unlocked,
-	.compat_ioctl = dispatch_ioctl_unlocked,
-	.release = inofile_release,
-};
-
-struct kprobe reboot_kp = {
-	.symbol_name = "__arm64_sys_reboot",
-	.pre_handler = reboot_handler_pre,
-};
-
-static bool drv_read_wrapped_syscall_args(struct pt_regs *regs, unsigned long args[4]) {
-	unsigned long pt_regs_ptr;
-	if (!regs) return false;
-	pt_regs_ptr = regs->regs[0];
-	if (!pt_regs_ptr) return false;
-	return copy_from_kernel_nofault(args, (const void *)(uintptr_t)pt_regs_ptr, sizeof(unsigned long) * 4) == 0;
-}
-
-static void drv_queue_fd_install(void __user *reply, const char *source) {
-	struct driver_install_work *work;
-	if (!reply) { LOGW("%s handshake missing reply pointer\n", source); return; }
-	LOGI("%s handshake hit: pid=%d\n", source, current->pid);
-	work = kmalloc(sizeof(*work), GFP_ATOMIC | __GFP_HIGH);
-	if (!work) return;
-	work->head.next = NULL;
-	work->head.func = driver_install_fd_tw_func;
-	work->reply = reply;
-	if (drv_task_work_add(current, &work->head, TWA_RESUME) != 0) {
-		kfree(work);
-		LOGW("install fd add task_work failed\n");
-	}
-}
-
-int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs) {
-	static DEFINE_SPINLOCK(handshake_dedup_lock);
-	static pid_t last_pid;
-	static unsigned long last_reply;
-	static unsigned long last_jiffies;
-	unsigned long args[4];
-	unsigned long flags;
-	bool duplicate;
-
-	(void)p;
-	if (!regs) return 0;
-	args[0] = regs->regs[0]; args[1] = regs->regs[1]; args[2] = regs->regs[2]; args[3] = regs->regs[3];
-
-	if ((u32)args[0] != COMM_REBOOT_MAGIC1 || (u32)args[1] != COMM_REBOOT_MAGIC2) {
-		if (!drv_read_wrapped_syscall_args(regs, args)) return 0;
-		if ((u32)args[0] != COMM_REBOOT_MAGIC1 || (u32)args[1] != COMM_REBOOT_MAGIC2) return 0;
-	}
-
-	spin_lock_irqsave(&handshake_dedup_lock, flags);
-	duplicate = (last_pid == current->pid && last_reply == args[3] && time_before_eq(jiffies, last_jiffies + 4));
-	if (!duplicate) { last_pid = current->pid; last_reply = args[3]; last_jiffies = jiffies; }
-	spin_unlock_irqrestore(&handshake_dedup_lock, flags);
-
-	if (duplicate) return 0;
-	drv_queue_fd_install((void __user *)args[3], "reboot");
-	return 0;
-}
-
-void driver_install_fd_tw_func(struct callback_head *twork) {
-	struct driver_install_work *work = container_of(twork, struct driver_install_work, head);
-	struct file *filp;
-	int fd, reply_fd;
-
-	fd = get_unused_fd_flags(O_CLOEXEC);
-	if (fd < 0) { LOGE("fd_install: failed to get unused fd\n"); reply_fd = fd; goto reply; }
-
-	filp = anon_inode_getfile("[eventpoll]", &inofile_fops, NULL, O_RDWR | O_LARGEFILE);
-	if (IS_ERR(filp)) { LOGE("fd_install: failed to create anon inode file\n"); put_unused_fd(fd); reply_fd = PTR_ERR(filp); goto reply; }
-
-	fd_install(fd, filp);
-	LOGI("fd installed: %d for pid %d\n", fd, current->pid);
-	reply_fd = fd;
-
-reply:
-	LOGI("[%d] install fd: %d\n", current->pid, reply_fd);
-	if (copy_to_user(work->reply, &reply_fd, sizeof(reply_fd)) != 0) {
-		LOGE("install fd reply err\n");
-		if (reply_fd >= 0) drv_close_fd(reply_fd);
-	}
-	kfree(work);
-}
-
-static int read_req(void __user *arg, struct drv_ioctl_req *out) {
-	if (copy_from_user(out, arg, sizeof(*out)) != 0) return -EFAULT;
-	return 0;
-}
-
-static void write_back_size(void __user *arg, u64 value) {
-	void __user *size_slot = (u8 __user *)arg + offsetof(struct drv_ioctl_req, size);
-	if (copy_to_user(size_slot, &value, sizeof(value)) != 0) LOGW("dispatch_ioctl: size writeback failed\n");
-}
-
-static void resolve_target_mm(pid_t pid, struct task_struct **out_task, struct mm_struct **out_mm) {
-	struct pid *pidp; struct task_struct *task; struct mm_struct *mm;
-	*out_task = NULL; *out_mm = NULL;
-	pidp = find_get_pid(pid); if (!pidp) return;
-	task = get_pid_task(pidp, PIDTYPE_PID); put_pid(pidp); if (!task) return;
-	mm = get_task_mm(task);
-	if (!mm || IS_ERR(mm)) { put_task_struct(task); return; }
-	*out_task = task; *out_mm = mm;
-}
-
-static void release_target_mm(struct task_struct *task, struct mm_struct *mm) {
-	if (mm) mmput(mm);
-	if (task) put_task_struct(task);
-}
-
-static long do_memory_cmd(unsigned int cmd, void __user *arg) {
-	struct drv_ioctl_req req;
-	struct task_struct *task = NULL; struct mm_struct *mm = NULL;
-	u64 result = 0; int rc;
-	if (read_req(arg, &req) != 0) return 0;
-
-	switch (cmd) {
-		case DRV_CMD_READ_MEM_LINEAR:
-			if (req.size == 0 || req.size > DRV_MEM_CMD_MAX_SIZE) break;
-			resolve_target_mm((pid_t)req.pid, &task, &mm); if (!mm) break;
-			rc = read_process_memory_linear(mm, req.addr, (void *)(uintptr_t)req.buf, req.size);
-			if (rc == 0) result = req.size; break;
-		case DRV_CMD_WRITE_MEM_LINEAR:
-			if (req.size == 0 || req.size > DRV_MEM_CMD_MAX_SIZE) break;
-			resolve_target_mm((pid_t)req.pid, &task, &mm); if (!mm) break;
-			rc = write_process_memory_linear(mm, req.addr, (const void *)(uintptr_t)req.buf, req.size);
-			if (rc == 0) result = req.size; break;
-		case DRV_CMD_READ_MEM_VMAP:
-			if (req.size == 0 || req.size > DRV_MEM_CMD_MAX_SIZE) break;
-			resolve_target_mm((pid_t)req.pid, &task, &mm); if (!mm) break;
-			rc = read_process_memory_vmap(mm, req.addr, (void *)(uintptr_t)req.buf, req.size);
-			if (rc == 0) result = req.size; break;
-		case DRV_CMD_WRITE_MEM_VMAP:
-			if (req.size == 0 || req.size > DRV_MEM_CMD_MAX_SIZE) break;
-			resolve_target_mm((pid_t)req.pid, &task, &mm); if (!mm) break;
-			rc = write_process_memory_vmap(mm, req.addr, (const void *)(uintptr_t)req.buf, req.size);
-			if (rc == 0) result = req.size; break;
-		case DRV_CMD_GET_MODULE_BASE: {
-			char name[256]; long nread;
-			resolve_target_mm((pid_t)req.pid, &task, &mm); if (!task) break;
-			nread = strncpy_from_user(name, (const char __user *)(uintptr_t)req.addr, sizeof(name));
-			if (nread < 0 || nread == 0) break;
-			name[sizeof(name) - 1] = '\0';
-			result = process_get_module_base(task, name); break;
-		}
-		case DRV_CMD_FIND_TASK_BY_COMM: {
-			char comm[256]; long nread; struct task_struct *found;
-			nread = strncpy_from_user(comm, (const char __user *)(uintptr_t)req.addr, sizeof(comm));
-			if (nread < 0) { result = (u64)(s64)-EFAULT; break; }
-			if (nread >= (long)sizeof(comm)) nread = sizeof(comm) - 1;
-			comm[nread] = '\0';
-			if (comm[0] == '\0') { result = (u64)(s64)-EINVAL; break; }
-			found = process_find_task_by_comm(comm);
-			if (found) { result = (u64)task_pid_nr(found); put_task_struct(found); }
-			else { result = (u64)(s64)-1; }
-			break;
-		}
-		case DRV_CMD_READ_VMA_COOKIE:
-			resolve_target_mm((pid_t)req.pid, &task, &mm);
-			if (task) {
-				char tag[16];
-				if (copy_from_user(tag, (const char __user *)(uintptr_t)req.addr, sizeof(tag)) == 0)
-					result = process_read_vma_cookie(task, tag);
-			}
-			break;
-		case DRV_CMD_GET_TLS:
-			resolve_target_mm((pid_t)req.pid, &task, &mm);
-			if (task) result = process_get_tls(task);
-			break;
-		case DRV_CMD_HIDE_KGSL:
-			result = (u64)(s64)hide_kgsl_by_pid(resolve_kgsl_driver(), (int)req.pid);
-			break;
-		case DRV_CMD_MULTI_READ:
-			resolve_target_mm((pid_t)req.pid, &task, &mm);
-			if (mm) {
-				rc = multi_read_process_memory(mm, (void __user *)(uintptr_t)req.buf, (unsigned int)req.extra);
-				result = (rc > 0) ? 1 : 0;
-			}
-			break;
-		case DRV_CMD_DUMP_VMAS:
-			resolve_target_mm((pid_t)req.pid, &task, &mm);
-			if (task) {
-				rc = process_maps_get_a(task, (void __user *)(uintptr_t)req.buf, req.size);
-				result = (rc > 0) ? (u64)rc : 0;
-			}
-			break;
-		default:
-			release_target_mm(task, mm);
-			return -ENOTTY;
-	}
-	release_target_mm(task, mm);
-	write_back_size(arg, result);
-	return 0;
-}
-
 static long do_get_apga_keys(void __user *arg) {
 	struct drv_ioctl_req req;
-	struct task_struct *task = NULL; struct mm_struct *mm = NULL;
-	u64 apga_lo = 0, apga_hi = 0; int rc;
+	struct task_struct *task = NULL;
+	struct mm_struct *mm = NULL;
+	u64 apga_lo = 0, apga_hi = 0;
+	int rc;
+
 	if (read_req(arg, &req) != 0) return -EFAULT;
 	resolve_target_mm((pid_t)req.pid, &task, &mm);
 	if (!task) return -ESRCH;
 	rc = process_get_apga(task, &apga_lo, &apga_hi);
 	release_target_mm(task, mm);
 	if (rc) return rc;
-	req.size = apga_lo; req.extra = apga_hi;
+
+	req.size = apga_lo;
+	req.extra = apga_hi;
 	if (copy_to_user(arg, &req, sizeof(req)) != 0) return -EFAULT;
 	return 0;
 }
 
 static long do_find_pid_by_package(void __user *arg) {
 	struct drv_find_pid_req req;
-	size_t package_len; pid_t pid; int rc;
+	size_t package_len;
+	pid_t pid;
+	int rc;
+
 	if (copy_from_user(&req, arg, sizeof(req)) != 0) return -EFAULT;
 	if (req.flags != 0) return -EINVAL;
+
 	package_len = strnlen(req.package, sizeof(req.package));
 	if (!package_len) return -EINVAL;
 	if (package_len == sizeof(req.package)) return -ENAMETOOLONG;
+
 	rc = process_find_pid_by_package(req.package, &pid);
 	if (rc) return rc;
+
 	req.pid = pid;
 	if (copy_to_user(arg, &req, sizeof(req)) != 0) return -EFAULT;
 	return 0;
@@ -342,25 +92,33 @@ static long do_find_pid_by_package(void __user *arg) {
 static long do_hook_cmd(unsigned int cmd, void __user *arg) {
 	switch (cmd) {
 		case DRV_CMD_GAME_ASSET_READ_A:
-			if (copy_to_user(arg, drv.wz_hero_addr_map, DRV_WZ_HERO_ADDR_MAP_BYTES) != 0) return -EFAULT;
+			if (copy_to_user(arg, drv.wz_hero_addr_map, DRV_WZ_HERO_ADDR_MAP_BYTES) != 0)
+				return -EFAULT;
 			return 0;
-		case DRV_CMD_INSTALL_HOOKS: return install_harvest_hooks();
+		case DRV_CMD_INSTALL_HOOKS:
+			return install_harvest_hooks();
 		case DRV_CMD_TEAR_DOWN:
 			wz_hero_addr_map_clear();
 			memset(drv.wz_hero_objects, 0, sizeof(drv.wz_hero_objects));
 			return 0;
 		case DRV_CMD_GAME_ASSET_READ_B:
-			if (copy_to_user(arg, drv.wz_hero_objects, DRV_WZ_HERO_OBJECTS_BYTES) != 0) return -EFAULT;
+			if (copy_to_user(arg, drv.wz_hero_objects, DRV_WZ_HERO_OBJECTS_BYTES) != 0)
+				return -EFAULT;
 			return 0;
-		case DRV_CMD_INSTALL_SIGSEGV_SUPPRESS: return install_harvest_hooks();
-		default: return 0;
+		case DRV_CMD_INSTALL_SIGSEGV_SUPPRESS:
+			return install_harvest_hooks();
+		default:
+			return 0;
 	}
 }
 
 static long do_input_cmd(unsigned int cmd, void __user *arg) {
-	struct drv_touch_inject_req t; int ret;
+	struct drv_touch_inject_req t;
+	int ret;
+
 	ret = install_input_hooks();
 	if (ret) return ret;
+
 	switch (cmd) {
 		case DRV_CMD_TOUCH_DOWN:
 			if (copy_from_user(&t, arg, sizeof(t)) != 0) return -EFAULT;
@@ -370,11 +128,14 @@ static long do_input_cmd(unsigned int cmd, void __user *arg) {
 			return 0;
 		case DRV_CMD_TOUCH_UP:
 			if (copy_from_user(&t, arg, sizeof(t)) != 0) return -EFAULT;
-			touch_up((int)t.slot_id); return 0;
+			touch_up((int)t.slot_id);
+			return 0;
 		case DRV_CMD_TOUCH_MOVE:
 			if (copy_from_user(&t, arg, sizeof(t)) != 0) return -EFAULT;
-			touch_move((int)t.slot_id, (int)t.x, (int)t.y); return 0;
-		case DRV_CMD_TOUCH_SLOT_LEGACY: return 0;
+			touch_move((int)t.slot_id, (int)t.x, (int)t.y);
+			return 0;
+		case DRV_CMD_TOUCH_SLOT_LEGACY:
+			return 0;
 		case DRV_CMD_SENSOR_BIND: {
 			struct drv_ioctl_req req;
 			if (read_req(arg, &req) != 0) return -EFAULT;
@@ -382,10 +143,13 @@ static long do_input_cmd(unsigned int cmd, void __user *arg) {
 				if (req.size >= DRV_SENSOR_LAYOUT_COUNT) return -EINVAL;
 				return sensor_hook_init((unsigned long)req.addr, (int)req.size);
 			}
-			gyro_x = (u32)req.addr; gyro_y = (u32)req.size; gyro_enable = (u8)(req.extra != 0);
+			gyro_x = (u32)req.addr;
+			gyro_y = (u32)req.size;
+			gyro_enable = (u8)(req.extra != 0);
 			return 0;
 		}
-		default: return 0;
+		default:
+			return 0;
 	}
 }
 
@@ -398,119 +162,31 @@ static long dispatch_ioctl_unlocked(struct file *filp, unsigned int cmd, unsigne
 	u64 hello;
 
 	if (cmd == DRIVER_IOCTL_PING) return 0;
+
 	if (cmd == DRIVER_IOCTL_HELLO) {
 		hello = DRIVER_IOCTL_HELLO;
 		if (copy_to_user(uarg, &hello, sizeof(hello)) != 0) return -EFAULT;
 		return 0;
 	}
 
-	if (cmd == DRV_CMD_RING_REGISTER) {
-		struct drv_ioctl_req req;
-		struct drv_ring_ctx *ctx;
-		struct vm_area_struct *vma;
-		unsigned long nr_pages, i;
-		u64 phys;
-
-		if (read_req(uarg, &req) != 0) return -EFAULT;
-		if (filp->private_data) return -EBUSY;
-		if (req.size < 2 * PAGE_SIZE || (req.size & ~PAGE_MASK)) return -EINVAL;
-
-		mmap_read_lock(current->mm);
-		vma = find_vma(current->mm, req.buf);
-		if (!vma || vma->vm_start > req.buf || vma->vm_end < req.buf + req.size ||
-		    !(vma->vm_flags & VM_WRITE) || (vma->vm_flags & VM_SHARED)) {
-			mmap_read_unlock(current->mm); return -EPERM;
-		}
-		if (vaddr_to_phys(current->mm, req.buf, &phys) != 0) {
-			mmap_read_unlock(current->mm); return -EFAULT;
-		}
-		mmap_read_unlock(current->mm);
-
-		nr_pages = req.size >> PAGE_SHIFT;
-		ctx = kzalloc(sizeof(*ctx) + nr_pages * sizeof(ctx->pages[0]), GFP_KERNEL);
-		if (!ctx) return -ENOMEM;
-
-		ctx->user_ptr = req.buf; ctx->size = req.size; ctx->nr_pages = nr_pages;
-		ctx->pages[0].pfn = PHYS_PFN(phys);
-		ctx->pages[0].kva = phys_to_virt(phys);
-
-		for (i = 1; i < nr_pages; i++) {
-			u64 p;
-			mmap_read_lock(current->mm);
-			if (vaddr_to_phys(current->mm, req.buf + (i << PAGE_SHIFT), &p) != 0) {
-				mmap_read_unlock(current->mm); kfree(ctx); return -EFAULT;
-			}
-			mmap_read_unlock(current->mm);
-			ctx->pages[i].pfn = PHYS_PFN(p);
-			ctx->pages[i].kva = page_address(pfn_to_page(PHYS_PFN(p)));
-		}
-		filp->private_data = ctx;
-		return 0;
-	}
-
 	if (cmd == DRV_CMD_FIND_PID_BY_PACKAGE) return do_find_pid_by_package(uarg);
 	if (cmd == DRV_CMD_GET_APGA_KEYS) return do_get_apga_keys(uarg);
+
 	if (cmd >= DRV_CMD_READ_MEM_LINEAR && cmd <= DRV_CMD_DUMP_VMAS) return do_memory_cmd(cmd, uarg);
 	if (cmd >= DRV_CMD_GAME_ASSET_READ_A && cmd <= DRV_CMD_INSTALL_SIGSEGV_SUPPRESS) return do_hook_cmd(cmd, uarg);
 	if (cmd >= DRV_CMD_INPUT_RANGE_FIRST && cmd <= DRV_CMD_INPUT_RANGE_LAST) return do_input_cmd(cmd, uarg);
 	if (cmd >= DRV_CMD_HWBP_RANGE_FIRST && cmd <= DRV_CMD_HWBP_RANGE_LAST) return do_hwbp_cmd(cmd, uarg, filp);
 	if (cmd >= DRV_CMD_HWBP_EXT_RANGE_FIRST && cmd <= DRV_CMD_HWBP_EXT_RANGE_LAST) return do_hwbp_ext_cmd(cmd, uarg, filp);
-	
-	/* W^X 影子页路由 */
-	if (cmd >= DRV_CMD_PTE_HOOK_RANGE_FIRST && cmd <= DRV_CMD_PTE_HOOK_RANGE_LAST)
-		return do_wxshadow_cmd(cmd, uarg, filp);
-
+	if (cmd >= DRV_CMD_PTE_HOOK_RANGE_FIRST && cmd <= DRV_CMD_PTE_HOOK_RANGE_LAST) return do_pte_hook_cmd(cmd, uarg);
 	if (cmd >= DRV_CMD_HIDE_PID_RANGE_FIRST && cmd <= DRV_CMD_HIDE_PID_RANGE_LAST) return do_dirent_hide_cmd(cmd, uarg);
+
+	/* 新增：W^X Shadow Hook 路由 */
+	if (cmd >= DRV_CMD_WX_SET_BP && cmd <= DRV_CMD_WX_GET_STATE)
+		return do_wxshadow_cmd(cmd, uarg, filp);
 
 	return -ENOTTY;
 }
 
 long dispatch_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 	return dispatch_ioctl_unlocked(filp, cmd, arg);
-}
-
-int drv_ring_push_event(struct file *filp, const void *event_data, uint32_t event_size) {
-	struct drv_ring_ctx *ctx = filp ? filp->private_data : NULL;
-	struct drv_ring_header *hdr;
-	struct page *page = NULL;
-	u32 cap, head, tail, next_head;
-	u64 data_idx;
-	unsigned long page_idx;
-	void *dst;
-	int ret;
-
-	if (!ctx) return -ENODEV;
-	hdr = (struct drv_ring_header *)ctx->pages[0].kva;
-
-	cap = READ_ONCE(hdr->capacity);
-	if (READ_ONCE(hdr->event_size) != event_size || event_size == 0 ||
-	    event_size > PAGE_SIZE || (PAGE_SIZE % event_size) != 0) return -EINVAL;
-	if (cap == 0 || (u64)cap * event_size > ctx->size - PAGE_SIZE) return -EINVAL;
-
-	head = READ_ONCE(hdr->head); tail = READ_ONCE(hdr->tail);
-	if (head >= cap || tail >= cap) return -EINVAL;
-	next_head = (head + 1) % cap;
-	if (next_head == tail) {
-		WRITE_ONCE(hdr->dropped, READ_ONCE(hdr->dropped) + 1);
-		return 0;
-	}
-
-	data_idx = (u64)head * event_size;
-	page_idx = 1 + (data_idx >> PAGE_SHIFT);
-	if (page_idx >= ctx->nr_pages) return -EINVAL;
-
-	ret = get_user_pages_fast(ctx->user_ptr + (page_idx << PAGE_SHIFT), 1, FOLL_WRITE, &page);
-	if (ret != 1) return -EFAULT;
-	if (page_to_pfn(page) != ctx->pages[page_idx].pfn) {
-		put_page(page);
-		WRITE_ONCE(hdr->stale, 1);
-		return -ESTALE;
-	}
-
-	dst = (char *)ctx->pages[page_idx].kva + (data_idx & ~PAGE_MASK);
-	memcpy(dst, event_data, event_size);
-	smp_wmb();
-	WRITE_ONCE(hdr->head, next_head);
-	put_page(page);
-	return 0;
 }
