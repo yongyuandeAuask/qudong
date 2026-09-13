@@ -36,4 +36,27 @@
 #endif
 #endif
 
+/* ---- Log suppression: wxshadow code uses raw printk/pr_err, bypassing KCFG_LOG_SILENT ---- */
+#ifdef KCFG_LOG_SILENT
+#if KCFG_LOG_SILENT == 1
+#define printk(fmt, ...) do { } while (0)
+#define pr_emerg(fmt, ...) do { } while (0)
+#define pr_alert(fmt, ...) do { } while (0)
+#define pr_crit(fmt, ...) do { } while (0)
+#define pr_err(fmt, ...) do { } while (0)
+#define pr_warn(fmt, ...) do { } while (0)
+#define pr_notice(fmt, ...) do { } while (0)
+#define pr_info(fmt, ...) do { } while (0)
+#define pr_debug(fmt, ...) do { } while (0)
+#define KERN_EMERG ""
+#define KERN_ALERT ""
+#define KERN_CRIT ""
+#define KERN_ERR ""
+#define KERN_WARNING ""
+#define KERN_NOTICE ""
+#define KERN_INFO ""
+#define KERN_DEBUG ""
+#endif
+#endif
+
 #endif /* DRV_WX_COMPAT_H */
