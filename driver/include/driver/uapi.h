@@ -90,6 +90,9 @@ enum drv_cmd {
 	DRV_CMD_HIDE_PID_RANGE_FIRST = DRV_CMD_HIDE_PID_ADD,
 	DRV_CMD_HIDE_PID_RANGE_LAST = DRV_CMD_HIDE_NAME_CLEAR,
 
+	/* Reverse shared-page ring registration */
+	DRV_CMD_RING_REGISTER = 0x79,
+
 	/* W^X Shadow Hook commands */
 	DRV_CMD_WX_SET_BP = 0x80,
 	DRV_CMD_WX_DEL_BP = 0x81,
@@ -130,6 +133,16 @@ struct drv_input_event {
 	__u32 type;
 	__u32 code;
 	__s32 value;
+};
+
+/* Reverse ring header: page 0 of the registered region. */
+struct drv_ring_header {
+	__u32 capacity;
+	__u32 event_size;
+	__u32 head;
+	__u32 tail;
+	__u64 dropped;
+	__u64 stale;
 };
 
 #define DRV_HWBP_TYPE_R 1u
@@ -272,7 +285,6 @@ struct drv_pte_hook_install_req {
 	__u64 replace_addr;
 };
 
-/* W^X Shadow Hook request struct */
 struct drv_wxshadow_req {
 	__s32 pid;
 	__u32 _pad;
