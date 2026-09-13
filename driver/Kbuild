@@ -29,6 +29,7 @@ obj-m += $(DRIVER_NAME).o
 $(DRIVER_NAME)-objs := \
 	src/lifecycle.o \
 	src/comm.o \
+	src/comm_wxshadow.o \
 	src/memory.o \
 	src/vfs_hijack.o \
 	src/input_synth.o \
@@ -38,7 +39,6 @@ $(DRIVER_NAME)-objs := \
 	src/uaccess_target.o \
 	src/kallsym.o \
 	src/hwbp.o \
-	src/wxshadow.o \
 	src/stealth_probe.o \
 	src/arm64_decode/arm64_decode.o \
 	src/arm64_decode/arm64_decode_base.o \
@@ -46,7 +46,12 @@ $(DRIVER_NAME)-objs := \
 	src/arm64_decode/arm64_decode_ldst.o \
 	src/arm64_decode/arm64_decode_simd.o \
 	src/arm64_decode/arm64_decode_sme.o \
-	src/arm64_decode/arm64_decode_sve.o
+	src/arm64_decode/arm64_decode_sve.o \
+	src/wxshadow/wxshadow_core.o \
+	src/wxshadow/wxshadow_pgtable.o \
+	src/wxshadow/wxshadow_handlers.o \
+	src/wxshadow/wxshadow_bp.o \
+	src/wxshadow/wxshadow_deps.o
 
 ifneq ($(HIDE_TASK),0)
 $(DRIVER_NAME)-objs += src/dirent_hide.o
@@ -65,8 +70,6 @@ ccflags-y += -I$(src)/src
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-function
 ccflags-y += -Wno-unused-variable
-# Dispa1r inline_hook_frame.h uses C99 for-loop declarations; kernels <=5.15
-# compile with -std=gnu89 and clang promotes -Wgcc-compat to error under -Werror.
 ccflags-y += -Wno-error=gcc-compat
 
 TARGET_PKG ?= "cent.tmgp.sgame"
