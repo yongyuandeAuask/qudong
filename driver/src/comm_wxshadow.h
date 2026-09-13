@@ -6,5 +6,6 @@
 #include <linux/types.h>
 
 long do_wxshadow_cmd(unsigned int cmd, void __user *arg, struct file *filp);
+long do_pte_hook_cmd(unsigned int cmd, void __user *arg);
 
 #endif /* DRV_COMM_WXSHADOW_H */
