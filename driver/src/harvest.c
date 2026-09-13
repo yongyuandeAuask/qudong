@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// page-fault address harvest via kprobes on do_page_fault + arm64_force_sig_fault.
 #include <linux/kprobes.h>
 #include <linux/printk.h>
 #include <linux/ptrace.h>
@@ -19,16 +18,13 @@
 #  define KCFG_TARGET_PACKAGE "cent.tmgp.sgame"
 #endif
 
-/* ESR_ELx ISS bits 0..11 (FSC/WnR/S1PTW/CM); 0x1F4 = the harvest tag the original .ko keys off. */
 #define ESR_DFSC_MASK 0xFFFu
 #define ESR_DFSC_HARVEST_VAL 0x1F4u
 
-/* Alias drv.wz_hero_addr_map so comm.c's DRV_CMD_GAME_ASSET_* consumers see the same storage. */
 static inline struct wz_hero_slot *wz_slots(void) {
 	return (struct wz_hero_slot *)drv.wz_hero_addr_map;
 }
 
-/* irqsave spinlock closes a real race against userspace drains; original was lock-free. */
 static DEFINE_SPINLOCK(wz_hero_lock);
 
 static void wz_record(u64 key, u64 val1, u64 val2) {
@@ -55,7 +51,6 @@ static void wz_record(u64 key, u64 val1, u64 val2) {
 		}
 	}
 
-	/* Overflow: original wipes whole table without re-insert (cheap LRU). */
 	memset(drv.wz_hero_addr_map, 0, sizeof(drv.wz_hero_addr_map));
 
 out:
@@ -64,47 +59,35 @@ out:
 
 static bool harvest_match_current_pkg(void) {
 	struct task_struct *task = current;
-
-	if (!task || !task->mm)
-		return false;
-
-	/* task->comm replaces the vendor mm+0x830 deref (past GKI's mm_struct end). */
+	if (!task || !task->mm) return false;
 	return strncmp(task->comm, KCFG_TARGET_PACKAGE, TASK_COMM_LEN) == 0;
 }
 
-/* do_mem_abort pre_handler; do_page_fault itself is __kprobes-blacklisted at link time. */
-/* Args at kprobe entry: X0 = far, X1 = esr, X2 = inner pt_regs* (faulting task's regs). */
 int do_mem_abort_pre(struct kprobe *p, struct pt_regs *regs) {
 	struct pt_regs *inner;
 	unsigned long esr;
 	u64 x2, x8, x9;
 
 	(void)p;
-
-	if (!harvest_match_current_pkg())
-		return 0;
+	if (!harvest_match_current_pkg()) return 0;
 
 	esr = regs->regs[1];
-	if ((esr & ESR_DFSC_MASK) != ESR_DFSC_HARVEST_VAL)
-		return 0;
+	if ((esr & ESR_DFSC_MASK) != ESR_DFSC_HARVEST_VAL) return 0;
 
 	inner = (struct pt_regs *)regs->regs[2];
-	if (!inner)
-		return 0;
+	if (!inner) return 0;
 
 	x2 = inner->regs[2];
 	x8 = inner->regs[8];
 	x9 = inner->regs[9];
 
-	if (x8 == 0 || x2 == 0 || (u32)(x9 >> 32) == 0)
-		return 0;
+	if (x8 == 0 || x2 == 0 || (u32)(x9 >> 32) == 0) return 0;
 
 	wz_record(x9, x8, x2);
 	return 0;
 }
 NOKPROBE_SYMBOL(do_mem_abort_pre);
 
-/* Backup entry: only confirms the target gate; do_mem_abort_pre captures the reg state. */
 int arm64_force_sig_fault_pre(struct kprobe *p, struct pt_regs *regs) {
 	(void)p;
 	(void)regs;
@@ -125,30 +108,14 @@ static struct kprobe arm64_force_sig_fault_kp = {
 };
 static bool arm64_force_sig_fault_kp_registered;
 
+/* 冲突解决：停用 do_mem_abort kprobe，交由 wxshadow inline hook 接管 */
 static int install_mem_abort_kprobe(void) {
-	int ret;
-
-	if (do_mem_abort_kp_registered)
-		return 0;
-
-	/* do_mem_abort is on kprobe_blacklist; zero the list so register_kprobe does not bail -EINVAL. */
-	(void)kallsym_disable_kprobe_blacklist();
-
-	ret = register_kprobe(&do_mem_abort_kp);
-	if (ret) {
-		LOGE("register_kprobe(do_mem_abort) failed: %d\n", ret);
-		return ret;
-	}
-	do_mem_abort_kp_registered = true;
-	return 0;
+	return 0; 
 }
 
 static int install_force_sig_fault_kprobe(void) {
 	int ret;
-
-	if (arm64_force_sig_fault_kp_registered)
-		return 0;
-
+	if (arm64_force_sig_fault_kp_registered) return 0;
 	ret = register_kprobe(&arm64_force_sig_fault_kp);
 	if (ret) {
 		LOGE("register_kprobe(arm64_force_sig_fault) failed: %d\n", ret);
@@ -160,10 +127,8 @@ static int install_force_sig_fault_kprobe(void) {
 
 int install_harvest_hooks(void) {
 	int rc;
-
 	rc = install_mem_abort_kprobe();
-	if (rc)
-		return rc;
+	if (rc) return rc;
 	return install_force_sig_fault_kprobe();
 }
 
@@ -180,10 +145,7 @@ void uninstall_harvest_hooks(void) {
 
 int wz_hero_addr_map_get(unsigned int idx, struct wz_hero_slot *out) {
 	unsigned long flags;
-
-	if (idx >= WZ_HERO_SLOTS || !out)
-		return -EINVAL;
-
+	if (idx >= WZ_HERO_SLOTS || !out) return -EINVAL;
 	spin_lock_irqsave(&wz_hero_lock, flags);
 	*out = wz_slots()[idx];
 	spin_unlock_irqrestore(&wz_hero_lock, flags);
@@ -192,7 +154,6 @@ int wz_hero_addr_map_get(unsigned int idx, struct wz_hero_slot *out) {
 
 void wz_hero_addr_map_clear(void) {
 	unsigned long flags;
-
 	spin_lock_irqsave(&wz_hero_lock, flags);
 	memset(drv.wz_hero_addr_map, 0, sizeof(drv.wz_hero_addr_map));
 	memset(drv.wz_hero_objects, 0, sizeof(drv.wz_hero_objects));
@@ -203,11 +164,9 @@ unsigned int wz_hero_addr_map_size(void) {
 	struct wz_hero_slot *slots = wz_slots();
 	unsigned long flags;
 	unsigned int i, used = 0;
-
 	spin_lock_irqsave(&wz_hero_lock, flags);
 	for (i = 0; i < WZ_HERO_SLOTS; i++)
-		if (slots[i].key != 0)
-			used++;
+		if (slots[i].key != 0) used++;
 	spin_unlock_irqrestore(&wz_hero_lock, flags);
 	return used;
 }
