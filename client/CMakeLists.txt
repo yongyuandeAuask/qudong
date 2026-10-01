@@ -34,7 +34,7 @@ endif()
 
 install(TARGETS my-driver-client RUNTIME DESTINATION bin)
 
-# --- test_all: autonomous feature-verification binary --------------------
+# --- test_all: autonomous feature-verification binary -------------------- 
 # Exercises every feature the plan added and prints PASS/FAIL summaries to
 # stdout so CI + adb + human eyes can all consume it. Exit code is non-zero
 # on any FAIL.
@@ -48,3 +48,16 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 install(TARGETS my-driver-test RUNTIME DESTINATION bin)
+
+# --- kpm_test: KPM Ring Buffer Zero-Syscall Test -------------------------
+# Tests the open/ioctl/mmap/close setup and the zero-syscall atomic ring.
+add_executable(kpm_test tests/test_kpm_ring.cpp)
+
+target_include_directories(kpm_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/../driver/include)
+target_compile_options(kpm_test PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -fno-exceptions -fno-rtti)
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+	target_compile_options(kpm_test PRIVATE -Os -ffunction-sections -fdata-sections)
+	target_link_options(kpm_test PRIVATE -Wl,--gc-sections -s)
+endif()
+
+install(TARGETS kpm_test RUNTIME DESTINATION bin)
